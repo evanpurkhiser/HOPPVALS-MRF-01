@@ -1,0 +1,19 @@
+#
+# Partition Table
+#
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+#
+# Serial flasher: XIAO ESP32-C6 uses native USB-Serial-JTAG
+#
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+#
+# Zigbee
+#
+CONFIG_ZB_ENABLED=y
+# We are an end device / router on the network, not the coordinator.
+# Routers don't sleep, end devices can. Blinds are line-powered, start as router.
+CONFIG_ZB_ZED=n
+CONFIG_ZB_ZCZR=y
