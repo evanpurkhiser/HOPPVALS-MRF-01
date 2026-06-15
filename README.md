@@ -5,9 +5,9 @@
   </picture>
 </p>
 
-# HOPPVALS-MRF01
+# HOPPVALS-MRF-01
 
-[![electronics](https://github.com/evanpurkhiser/HOPPVALS-MRF01/actions/workflows/electronics.yml/badge.svg)](https://github.com/evanpurkhiser/HOPPVALS-MRF01/actions/workflows/electronics.yml)
+[![electronics](https://github.com/evanpurkhiser/HOPPVALS-MRF-01/actions/workflows/electronics.yml/badge.svg)](https://github.com/evanpurkhiser/HOPPVALS-MRF-01/actions/workflows/electronics.yml)
 
 **IKEA HOPPVALS Motorized Retrofit, version 01** (short: **HV-MRF-01**).
 
