@@ -1,8 +1,11 @@
 #include "blinds/zigbee.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_event.h"
@@ -252,6 +255,27 @@ extern "C" void zcl_action_handler(ezb_zcl_core_action_callback_id_t cb_id, void
 // Endpoint construction
 // ---------------------------------------------------------------------------
 
+// Build the Basic cluster's SWBuildID payload from the firmware version that
+// ESP-IDF bakes in at build time (PROJECT_VER, derived from `git describe` —
+// i.e. the short commit SHA, plus a "-dirty" suffix for uncommitted builds).
+// ZHA/Z2M surface this as the device's firmware version in Home Assistant, so
+// you can see which git revision a flashed unit is running.
+//
+// Zigbee character strings are length-prefixed: byte 0 holds the length. The
+// SDK keeps the pointer we hand it, so the buffer must outlive registration —
+// hence the function-local static.
+const char* sw_build_id()
+{
+    static char buf[1 + sizeof(esp_app_desc_t::version)] = {};
+    if (buf[0] == '\0') {
+        const char* version = esp_app_get_description()->version;
+        const auto  len      = std::min(std::strlen(version), sizeof(buf) - 1);
+        buf[0]               = static_cast<char>(len);
+        std::memcpy(&buf[1], version, len);
+    }
+    return buf;
+}
+
 void stamp_identity(ezb_af_ep_desc_t ep)
 {
     auto basic =
@@ -263,6 +287,7 @@ void stamp_identity(ezb_af_ep_desc_t ep)
                                         const_cast<char*>(MANUFACTURER_NAME));
     ezb_zcl_basic_cluster_desc_add_attr(basic, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
                                         const_cast<char*>(MODEL_IDENTIFIER));
+    ezb_zcl_basic_cluster_desc_add_attr(basic, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, sw_build_id());
 }
 
 ezb_af_ep_desc_t build_window_covering_endpoint()
