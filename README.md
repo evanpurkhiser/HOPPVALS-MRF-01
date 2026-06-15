@@ -7,6 +7,8 @@
 
 # HOPPVALS-MRF01
 
+[![electronics](https://github.com/evanpurkhiser/HOPPVALS-MRF01/actions/workflows/electronics.yml/badge.svg)](https://github.com/evanpurkhiser/HOPPVALS-MRF01/actions/workflows/electronics.yml)
+
 **IKEA HOPPVALS Motorized Retrofit, version 01** (short: **HV-MRF-01**).
 
 An open hardware + firmware project that motorizes an
