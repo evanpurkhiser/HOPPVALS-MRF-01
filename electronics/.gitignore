@@ -1,0 +1,20 @@
+# Our vendored KiCad part libraries are intentional — override the global
+# ~/.config/git/ignore 'vendor/' rule (a Go/PHP convention) that hides them.
+!vendor/
+
+# KiCad generated / temporary files
+*-backups/
+fp-info-cache
+*.kicad_prl
+*-bak
+*.bak
+~*.lck
+_autosave-*
+
+# Gerber / fab output (regenerated on demand)
+*.gbr
+*.drl
+*.gbrjob
+
+# Editor local history
+.history/

@@ -1,0 +1,6 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "DRV8876PWPR")(type "KiCad")(uri "${KIPRJMOD}/vendor/DRV8876PWPR/DRV8876PWPR.pretty")(options "")(descr "TI DRV8876 H-bridge motor driver"))
+	(lib (name "DMP3007SPS-13")(type "KiCad")(uri "${KIPRJMOD}/vendor/DMP3007SPS-13/DMP3007SPS-13.pretty")(options "")(descr "Diodes DMP3007SPS-13 P-channel MOSFET"))
+	(lib (name "XIAO-ESP32-C6-DIP")(type "KiCad")(uri "${KIPRJMOD}/vendor/XIAO-ESP32-C6-DIP/XIAO-ESP32-C6-DIP.pretty")(options "")(descr "Seeed Studio XIAO ESP32-C6 module"))
+)
