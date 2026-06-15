@@ -1,0 +1,75 @@
+name: electronics
+
+# Run KiCad's ERC (schematic) and DRC (board) on the HV-MRF-01 project.
+# Fails on error-severity violations; warnings (e.g. cosmetic silkscreen
+# clipping) are reported but do not fail the build.
+
+on:
+  push:
+    paths:
+      - "electronics/**"
+      - ".github/workflows/electronics.yml"
+  pull_request:
+    paths:
+      - "electronics/**"
+      - ".github/workflows/electronics.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: electronics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  erc-drc:
+    name: KiCad ERC & DRC
+    runs-on: ubuntu-latest
+    env:
+      # Official KiCad CLI image; bundles the standard symbol/footprint libs.
+      # Pin to a specific patch (e.g. kicad/kicad:10.0.3) for fully reproducible runs.
+      KICAD_IMAGE: kicad/kicad:10.0
+      SCH: electronics/HV-MRF-01.kicad_sch
+      PCB: electronics/HV-MRF-01.kicad_pcb
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: kicad-cli version
+        run: docker run --rm "$KICAD_IMAGE" kicad-cli version
+
+      # kicad-cli runs as root so it can write reports into the mounted workspace.
+      - name: Schematic ERC
+        run: |
+          docker run --rm --user root -e HOME=/root -v "$PWD:/work" -w /work "$KICAD_IMAGE" \
+            kicad-cli sch erc --severity-all --format json -o erc.json "$SCH"
+
+      - name: PCB DRC
+        run: |
+          docker run --rm --user root -e HOME=/root -v "$PWD:/work" -w /work "$KICAD_IMAGE" \
+            kicad-cli pcb drc --severity-all --format json -o drc.json "$PCB"
+
+      - name: Evaluate (fail on errors, report warnings)
+        run: |
+          status=0
+          for f in erc.json drc.json; do
+            errors=$(jq '[.. | objects | select(.severity? == "error")] | length' "$f")
+            warnings=$(jq '[.. | objects | select(.severity? == "warning")] | length' "$f")
+            echo "::group::$f — $errors error(s), $warnings warning(s)"
+            jq -r '[.. | objects | select(.severity? == "error")][]
+                   | "ERROR [\(.type)] \(.description)"' "$f"
+            jq -r '[.. | objects | select(.severity? == "warning")][]
+                   | "warning [\(.type)] \(.description)"' "$f"
+            echo "::endgroup::"
+            if [ "$errors" -gt 0 ]; then
+              echo "::error file=$f::$errors ERC/DRC error(s) in $f"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicad-reports
+          path: |
+            erc.json
+            drc.json
