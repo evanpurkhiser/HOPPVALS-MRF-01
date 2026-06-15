@@ -1,4 +1,4 @@
-name: electronics
+name: ERC
 
 # Run KiCad's ERC (schematic) and DRC (board) on the HV-MRF-01 project.
 # Fails on error-severity violations; warnings (e.g. cosmetic silkscreen
