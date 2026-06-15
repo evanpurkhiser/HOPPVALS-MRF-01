@@ -10,6 +10,13 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 #
+# Console: route both logs and REPL through the native USB-Serial-JTAG so the
+# cli component can attach its console there. (UART0 stays available for other
+# uses but isn't the primary stdio sink.)
+#
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+#
 # Zigbee
 #
 CONFIG_ZB_ENABLED=y

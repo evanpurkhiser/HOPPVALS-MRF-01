@@ -1,0 +1,55 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# 4-space indent, no tabs.
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+
+# Wider lines than LLVM's 80 — embedded C++ has long type names.
+ColumnLimit: 100
+
+# Braces: Allman for functions, K&R inside blocks (matches existing C style).
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterClass: true
+  AfterStruct: true
+  AfterEnum: true
+  AfterNamespace: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+  SplitEmptyFunction: false
+
+# Pointers/references next to the type ("char *p" → "char* p").
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Alignment of consecutive declarations / assignments — easier to scan.
+AlignConsecutiveAssignments: AcrossEmptyLines
+AlignConsecutiveDeclarations: false
+AlignConsecutiveMacros: AcrossEmptyLines
+AlignTrailingComments: true
+
+# Includes: leave manual ordering alone (we group by SDK vs project).
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+# C++ specifics.
+Standard: c++20
+NamespaceIndentation: None
+FixNamespaceComments: true
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortLambdasOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+SpaceAfterCStyleCast: true
+SpaceBeforeRangeBasedForLoopColon: true
+DerivePointerAlignment: false
+
+# Don't reflow comments — preserves table comments and ASCII art in DESIGN.md
+# referenced regions.
+ReflowComments: false

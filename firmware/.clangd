@@ -1,0 +1,22 @@
+CompileFlags:
+  # IDF builds with riscv32-esp-elf gcc; clangd on macOS uses host clang and
+  # chokes on a couple of toolchain flags. Strip them — they don't affect
+  # semantic analysis.
+  Remove:
+    - -mlongcalls
+    - -fno-tree-switch-conversion
+    - -fstrict-volatile-bitfields
+    - -fno-shrink-wrap
+    - -march=*
+    - -mabi=*
+    - -fmacro-prefix-map=*
+  Add:
+    # Use C++23 for our code; clangd needs to be told.
+    - -std=gnu++23
+
+Diagnostics:
+  Suppress:
+    # SDK headers use lots of variable-length arrays and missing-field-inits
+    # patterns that are fine but noisy.
+    - missing-field-initializers
+  UnusedIncludes: None
