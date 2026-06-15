@@ -1,3 +1,5 @@
+.DS_Store
+
 build/
 sdkconfig
 sdkconfig.old
@@ -10,4 +12,8 @@ managed_components/
 .cache/
 .vscode/
 .idea/
-compile_commands.json
+/firmware/compile_commands.json
+.cache/clangd/
+tools/.venv/
+tools/trace.png
+tools/__pycache__/
