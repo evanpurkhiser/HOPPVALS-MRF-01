@@ -32,4 +32,4 @@ the head rail and runs the firmware in this repo.
 - [`docs/PCB_DESIGN_OVERVIEW.md`](docs/PCB_DESIGN_OVERVIEW.md) — a walkthrough
   of the controller PCB and its design decisions.
 
-[hoppvals]: https://www.ikea.com/us/en/p/hoppvals-cellular-blind-white-30369420/
+[hoppvals]: https://www.ikea.com/us/en/p/hoppvals-cellular-blind-white-70431402/
