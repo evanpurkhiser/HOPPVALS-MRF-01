@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/carriage-hero-dark.png">
+    <img alt="HV-MRF-01 — Drive Carriage" src="docs/images/carriage-hero-light.png" width="100%">
+  </picture>
+</p>
+
 # HOPPVALS-MRF01
 
 **IKEA HOPPVALS Motorized Retrofit, version 01** (short: **HV-MRF-01**).

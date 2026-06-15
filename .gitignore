@@ -17,3 +17,6 @@ managed_components/
 tools/.venv/
 tools/trace.png
 tools/__pycache__/
+
+# Blender auto-backup
+*.blend1
