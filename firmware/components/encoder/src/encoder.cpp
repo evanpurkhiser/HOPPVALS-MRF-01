@@ -119,13 +119,7 @@ std::int32_t count(Side s)
 {
     int n = 0;
     pcnt_unit_get_count(units[idx(s)].unit, &n);
-    // Motor R's encoder A/B is wired with opposite quadrature direction
-    // vs Motor L — same physical motion produces opposite count signs.
-    // Negate here so both motors share a single convention: positive count
-    // = "raise" direction. (Could be fixed by swapping the encoder A/B
-    // wires on Motor R instead; doing it in software keeps the harness
-    // simple and is just as effective.)
-    return s == Side::Right ? -n : n;
+    return n;
 }
 
 void reset(Side s)

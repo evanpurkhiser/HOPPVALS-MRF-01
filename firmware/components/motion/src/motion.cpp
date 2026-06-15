@@ -99,14 +99,14 @@ float measured_rpm(std::int32_t delta_counts)
 
 motor::raw::Direction to_raw(Direction d)
 {
-    // Wiring convention: motor::raw::Reverse spins the motors in the
-    // physical "wind cord up" direction (i.e. raise the blind), so cover
-    // Open ⇒ Raise maps to Reverse here. The encoder convention is
-    // unchanged (Forward still produces positive counts), so dir_sign
-    // below flips the PI's idea of "positive motion" to match.
+    // As-built PCB wiring: motor::raw::Forward spins the motors in the
+    // physical "wind cord up" direction (raise the blind), so Raise maps to
+    // Forward. Raw forward produces *negative* encoder counts on both
+    // motors; dir_sign below flips the PI's idea of "positive motion" to
+    // match. (The breadboard prototype had this reversed.)
     switch (d) {
-    case Direction::Raise: return motor::raw::Direction::Reverse;
-    case Direction::Lower: return motor::raw::Direction::Forward;
+    case Direction::Raise: return motor::raw::Direction::Forward;
+    case Direction::Lower: return motor::raw::Direction::Reverse;
     case Direction::Stop:  return motor::raw::Direction::Brake;
     }
     return motor::raw::Direction::Brake;
@@ -197,8 +197,8 @@ void run_tick(Direction dir, int base_setpoint_rpm)
     // Sign of expected count motion per direction. Used to flip the
     // measured-RPM and sync-bias terms so the PI sees them in the
     // commanded reference frame (always "positive = on target").
-    // Raise drives raw::Reverse (counts go negative), Lower drives
-    // raw::Forward (counts go positive). dir_sign projects measured RPM
+    // Raise drives raw::Forward (counts go negative), Lower drives
+    // raw::Reverse (counts go positive). dir_sign projects measured RPM
     // and sync bias into the commanded reference frame ("positive = on
     // target") regardless of encoder count direction.
     const float dir_sign = (dir == Direction::Raise) ? -1.0f : 1.0f;
