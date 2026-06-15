@@ -1,4 +1,4 @@
-#include "blinds/encoder.hpp"
+#include "hv-mrf-01/encoder.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,11 +8,11 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
-namespace blinds::encoder {
+namespace hvmrf01::encoder {
 
 namespace {
 
-constexpr auto* TAG = "blinds.encoder";
+constexpr auto* TAG = "hv-mrf-01.encoder";
 
 // Per-motor encoder pin mapping (DESIGN.md). Wired with internal pull-ups
 // since the common motor-shaft Hall encoders have open-drain outputs.
@@ -137,4 +137,4 @@ void reset(Side s)
     pcnt_unit_clear_count(units[idx(s)].unit);
 }
 
-}  // namespace blinds::encoder
+}  // namespace hvmrf01::encoder

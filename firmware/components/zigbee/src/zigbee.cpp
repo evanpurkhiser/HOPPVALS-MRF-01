@@ -1,4 +1,4 @@
-#include "blinds/zigbee.hpp"
+#include "hv-mrf-01/zigbee.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -19,19 +19,19 @@
 #include "ezbee/zcl/cluster/identify_desc.h"
 #include "ezbee/zcl/cluster/window_covering_desc.h"
 
-namespace blinds::zigbee {
+namespace hvmrf01::zigbee {
 
 ESP_EVENT_DEFINE_BASE(EVENTS);
 
 namespace {
 
-constexpr auto* TAG = "blinds.zigbee";
+constexpr auto* TAG = "hv-mrf-01.zigbee";
 
 // Zigbee character strings: byte 0 is the length, then the chars.
 constexpr auto MANUFACTURER_NAME           = "\x0E"
                                              "Evan Purkhiser";
-constexpr auto MODEL_IDENTIFIER            = "\x08"
-                                             "HOPPVALS";
+constexpr auto MODEL_IDENTIFIER            = "\x09"
+                                             "HV-MRF-01";
 
 constexpr std::uint8_t  EP_WINDOW_COVERING = 10;
 constexpr std::uint32_t PRIMARY_CHANNEL    = 1U << 13;    // ch 13 first
@@ -384,4 +384,4 @@ void report_position(std::uint8_t pct)
     }
 }
 
-} // namespace blinds::zigbee
+} // namespace hvmrf01::zigbee

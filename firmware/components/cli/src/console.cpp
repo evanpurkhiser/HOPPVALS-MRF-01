@@ -1,4 +1,4 @@
-#include "blinds/console.hpp"
+#include "hv-mrf-01/console.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -10,37 +10,37 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "blinds/current_sense.hpp"
-#include "blinds/encoder.hpp"
-#include "blinds/motion.hpp"
-#include "blinds/motor.hpp"
+#include "hv-mrf-01/current_sense.hpp"
+#include "hv-mrf-01/encoder.hpp"
+#include "hv-mrf-01/motion.hpp"
+#include "hv-mrf-01/motor.hpp"
 
-namespace blinds::console {
+namespace hvmrf01::console {
 
 namespace {
 
-constexpr auto* TAG = "blinds.console";
+constexpr auto* TAG = "hv-mrf-01.console";
 
 // Parse an optional "L" / "R" / "both" arg; default to Both.
-blinds::motor::Side parse_side(int argc, char** argv, int idx)
+hvmrf01::motor::Side parse_side(int argc, char** argv, int idx)
 {
-    if (argc <= idx) return blinds::motor::Side::Both;
+    if (argc <= idx) return hvmrf01::motor::Side::Both;
     const std::string_view a{argv[idx]};
-    if (a == "L" || a == "l" || a == "left")  return blinds::motor::Side::Left;
-    if (a == "R" || a == "r" || a == "right") return blinds::motor::Side::Right;
-    return blinds::motor::Side::Both;
+    if (a == "L" || a == "l" || a == "left")  return hvmrf01::motor::Side::Left;
+    if (a == "R" || a == "r" || a == "right") return hvmrf01::motor::Side::Right;
+    return hvmrf01::motor::Side::Both;
 }
 
-const char* side_label(blinds::motor::Side s)
+const char* side_label(hvmrf01::motor::Side s)
 {
-    using S = blinds::motor::Side;
+    using S = hvmrf01::motor::Side;
     return s == S::Left ? "L" : s == S::Right ? "R" : "both";
 }
 
 int cmd_fwd(int argc, char** argv)
 {
     const auto s = parse_side(argc, argv, 1);
-    blinds::motor::debug::set_forward(s);
+    hvmrf01::motor::debug::set_forward(s);
     printf("→ %s forward at current duty\n", side_label(s));
     return 0;
 }
@@ -48,7 +48,7 @@ int cmd_fwd(int argc, char** argv)
 int cmd_rev(int argc, char** argv)
 {
     const auto s = parse_side(argc, argv, 1);
-    blinds::motor::debug::set_reverse(s);
+    hvmrf01::motor::debug::set_reverse(s);
     printf("→ %s reverse at current duty\n", side_label(s));
     return 0;
 }
@@ -56,7 +56,7 @@ int cmd_rev(int argc, char** argv)
 int cmd_brake(int argc, char** argv)
 {
     const auto s = parse_side(argc, argv, 1);
-    blinds::motor::debug::set_brake(s);
+    hvmrf01::motor::debug::set_brake(s);
     printf("→ %s brake (EN=0, active hold)\n", side_label(s));
     return 0;
 }
@@ -64,7 +64,7 @@ int cmd_brake(int argc, char** argv)
 int cmd_coast(int, char**)
 {
     // Coast is the shared nSLEEP going low — inherently both motors.
-    blinds::motor::debug::set_coast();
+    hvmrf01::motor::debug::set_coast();
     printf("→ coast (nSLEEP low, both motors Hi-Z)\n");
     return 0;
 }
@@ -75,7 +75,7 @@ int cmd_enable(int argc, char** argv)
 {
     if (argc < 2) {
         printf("driver enable (nSLEEP) = %s\n",
-               blinds::motor::debug::enabled() ? "on" : "off");
+               hvmrf01::motor::debug::enabled() ? "on" : "off");
         return 0;
     }
     const std::string_view a{argv[1]};
@@ -85,7 +85,7 @@ int cmd_enable(int argc, char** argv)
         printf("usage: enable [on|off]\n");
         return 1;
     }
-    blinds::motor::debug::set_enabled(on);
+    hvmrf01::motor::debug::set_enabled(on);
     printf("driver enable (nSLEEP) = %s\n", on ? "on" : "off");
     return 0;
 }
@@ -102,7 +102,7 @@ int cmd_pwm(int argc, char** argv)
         return 1;
     }
     const auto s = parse_side(argc, argv, 2);
-    blinds::motor::debug::set_duty_pct(pct, s);
+    hvmrf01::motor::debug::set_duty_pct(pct, s);
     printf("duty = %d%% (%s)\n", pct, side_label(s));
     return 0;
 }
@@ -114,7 +114,7 @@ int cmd_freq(int argc, char** argv)
         return 1;
     }
     const int hz = std::atoi(argv[1]);
-    if (!blinds::motor::debug::set_freq_hz(hz)) {
+    if (!hvmrf01::motor::debug::set_freq_hz(hz)) {
         printf("freq %d Hz rejected (try 100..200000)\n", hz);
         return 1;
     }
@@ -124,7 +124,7 @@ int cmd_freq(int argc, char** argv)
 
 int cmd_state(int, char**)
 {
-    blinds::motor::debug::print_state();
+    hvmrf01::motor::debug::print_state();
     return 0;
 }
 
@@ -138,13 +138,13 @@ int cmd_enc(int argc, char** argv)
 {
     if (argc == 1) {
         printf("L=%ld R=%ld\n",
-               static_cast<long>(blinds::encoder::count(blinds::motor::Side::Left)),
-               static_cast<long>(blinds::encoder::count(blinds::motor::Side::Right)));
+               static_cast<long>(hvmrf01::encoder::count(hvmrf01::motor::Side::Left)),
+               static_cast<long>(hvmrf01::encoder::count(hvmrf01::motor::Side::Right)));
         return 0;
     }
     if (std::string_view{argv[1]} == "reset") {
         const auto s = parse_side(argc, argv, 2);
-        blinds::encoder::reset(s);
+        hvmrf01::encoder::reset(s);
         printf("reset %s\n", side_label(s));
         return 0;
     }
@@ -152,12 +152,12 @@ int cmd_enc(int argc, char** argv)
         const int samples = argc >= 3 ? std::atoi(argv[2]) : 25;
         const auto side   = parse_side(argc, argv, 3);
         // Side::Both isn't meaningful here — pick Left.
-        const auto s      = side == blinds::motor::Side::Both ? blinds::motor::Side::Left : side;
-        std::int32_t prev  = blinds::encoder::count(s);
+        const auto s      = side == hvmrf01::motor::Side::Both ? hvmrf01::motor::Side::Left : side;
+        std::int32_t prev  = hvmrf01::encoder::count(s);
         const auto   start = xTaskGetTickCount();
         for (int i = 0; i < samples; i++) {
             vTaskDelay(pdMS_TO_TICKS(200));
-            const auto now      = blinds::encoder::count(s);
+            const auto now      = hvmrf01::encoder::count(s);
             const auto delta    = now - prev;
             const auto cps      = delta * 5;  // 200ms window → counts/sec
             prev                = now;
@@ -172,12 +172,12 @@ int cmd_enc(int argc, char** argv)
     }
     // Single-arg side ("enc L" / "enc R").
     const auto s = parse_side(argc, argv, 1);
-    if (s == blinds::motor::Side::Both) {
+    if (s == hvmrf01::motor::Side::Both) {
         printf("usage: enc | enc [L|R] | enc reset [L|R] | enc poll [samples] [L|R]\n");
         return 1;
     }
     printf("%s = %ld\n", side_label(s),
-           static_cast<long>(blinds::encoder::count(s)));
+           static_cast<long>(hvmrf01::encoder::count(s)));
     return 0;
 }
 
@@ -185,12 +185,12 @@ int cmd_enc(int argc, char** argv)
 int cmd_rpm(int argc, char** argv)
 {
     const auto side = parse_side(argc, argv, 1);
-    const auto s    = side == blinds::motor::Side::Both ? blinds::motor::Side::Left : side;
-    const auto start = blinds::encoder::count(s);
+    const auto s    = side == hvmrf01::motor::Side::Both ? hvmrf01::motor::Side::Left : side;
+    const auto start = hvmrf01::encoder::count(s);
     vTaskDelay(pdMS_TO_TICKS(1000));
-    const auto end   = blinds::encoder::count(s);
+    const auto end   = hvmrf01::encoder::count(s);
     const auto cps   = end - start;
-    const auto rpm   = (cps * 60) / blinds::encoder::COUNTS_PER_OUTPUT_REV;
+    const auto rpm   = (cps * 60) / hvmrf01::encoder::COUNTS_PER_OUTPUT_REV;
     printf("[%s] Δcount=%ld cps=%ld output_rpm=%ld (motor_rpm=%ld)\n",
            side_label(s),
            static_cast<long>(cps), static_cast<long>(cps),
@@ -205,12 +205,12 @@ int cmd_rpm(int argc, char** argv)
 //   cur poll [n] [L|R]   → stream current every 200ms for n samples (default 25)
 int cmd_current(int argc, char** argv)
 {
-    using blinds::motor::Side;
+    using hvmrf01::motor::Side;
 
     auto print_one = [](Side s) {
         printf("[%s] %ld mA  (%ld mV)\n", side_label(s),
-               static_cast<long>(blinds::current_sense::current_ma(s)),
-               static_cast<long>(blinds::current_sense::voltage_mv(s)));
+               static_cast<long>(hvmrf01::current_sense::current_ma(s)),
+               static_cast<long>(hvmrf01::current_sense::voltage_mv(s)));
     };
 
     if (argc == 1) {
@@ -224,8 +224,8 @@ int cmd_current(int argc, char** argv)
         for (int i = 0; i < samples; i++) {
             if (side == Side::Both) {
                 printf("L=%ld mA  R=%ld mA\n",
-                       static_cast<long>(blinds::current_sense::current_ma(Side::Left)),
-                       static_cast<long>(blinds::current_sense::current_ma(Side::Right)));
+                       static_cast<long>(hvmrf01::current_sense::current_ma(Side::Left)),
+                       static_cast<long>(hvmrf01::current_sense::current_ma(Side::Right)));
             } else {
                 print_one(side);
             }
@@ -249,7 +249,7 @@ int cmd_current(int argc, char** argv)
 //   spin <L|R> <fwd|rev> <duty 0-100> [ms=1500]
 int cmd_spin(int argc, char** argv)
 {
-    using blinds::motor::Side;
+    using hvmrf01::motor::Side;
 
     if (argc < 4) {
         printf("usage: spin <L|R> <fwd|rev> <duty 0-100> [ms=1500]\n");
@@ -283,27 +283,27 @@ int cmd_spin(int argc, char** argv)
            side_label(side), forward ? "fwd" : "rev", duty, ms);
     printf("t_ms,rpm,current_ma\n");
 
-    blinds::motor::debug::set_duty_pct(duty, side);
-    if (forward) blinds::motor::debug::set_forward(side);
-    else         blinds::motor::debug::set_reverse(side);
+    hvmrf01::motor::debug::set_duty_pct(duty, side);
+    if (forward) hvmrf01::motor::debug::set_forward(side);
+    else         hvmrf01::motor::debug::set_reverse(side);
 
-    std::int32_t prev  = blinds::encoder::count(side);
+    std::int32_t prev  = hvmrf01::encoder::count(side);
     const auto   t0    = xTaskGetTickCount();
     for (int i = 0; i < steps; i++) {
         vTaskDelay(pdMS_TO_TICKS(window_ms));
-        const auto now   = blinds::encoder::count(side);
+        const auto now   = hvmrf01::encoder::count(side);
         const auto delta = now - prev;
         prev             = now;
         const auto cps   = delta * (1000 / window_ms);
-        const auto rpm   = (cps * 60) / blinds::encoder::COUNTS_PER_OUTPUT_REV;
+        const auto rpm   = (cps * 60) / hvmrf01::encoder::COUNTS_PER_OUTPUT_REV;
         const auto t_ms  = pdTICKS_TO_MS(xTaskGetTickCount() - t0);
         printf("%lu,%ld,%ld\n",
                static_cast<unsigned long>(t_ms),
                static_cast<long>(rpm),
-               static_cast<long>(blinds::current_sense::current_ma(side)));
+               static_cast<long>(hvmrf01::current_sense::current_ma(side)));
     }
 
-    blinds::motor::debug::set_brake(side);
+    hvmrf01::motor::debug::set_brake(side);
     printf("spin done; %s braked.\n", side_label(side));
     return 0;
 }
@@ -316,7 +316,7 @@ int cmd_spin(int argc, char** argv)
 //   ramp <L|R> [ramp_s=3] [hold_s=1] [hz=100] [fwd|rev]
 int cmd_ramp(int argc, char** argv)
 {
-    using blinds::motor::Side;
+    using hvmrf01::motor::Side;
 
     if (argc < 2) {
         printf("usage: ramp <L|R> [ramp_s=3] [hold_s=1] [hz=100] [fwd|rev]\n");
@@ -352,9 +352,9 @@ int cmd_ramp(int argc, char** argv)
     const int  total_samples  = total_ms * hz / 1000;
     const auto period         = pdMS_TO_TICKS(1000 / hz);
 
-    blinds::encoder::reset(side);
-    if (forward) blinds::motor::debug::set_forward(side);
-    else         blinds::motor::debug::set_reverse(side);
+    hvmrf01::encoder::reset(side);
+    if (forward) hvmrf01::motor::debug::set_forward(side);
+    else         hvmrf01::motor::debug::set_reverse(side);
 
     printf("RAMP_BEGIN hz=%d ramp_s=%d hold_s=%d side=%s dir=%s\n",
            hz, ramp_s, hold_s, side_label(side), forward ? "fwd" : "rev");
@@ -367,17 +367,17 @@ int cmd_ramp(int argc, char** argv)
         const long t_ms = static_cast<long>(pdTICKS_TO_MS(xTaskGetTickCount() - t0));
         const int  duty = (t_ms >= ramp_ms) ? 100
                         : static_cast<int>(100L * t_ms / ramp_ms);
-        blinds::motor::debug::set_duty_pct(duty, side);
+        hvmrf01::motor::debug::set_duty_pct(duty, side);
 
-        const auto count = blinds::encoder::count(side);
-        const auto cur   = blinds::current_sense::current_ma(side);
+        const auto count = hvmrf01::encoder::count(side);
+        const auto cur   = hvmrf01::current_sense::current_ma(side);
         printf("%ld,%d,%ld,%ld\n", t_ms, duty,
                static_cast<long>(count), static_cast<long>(cur));
         emitted++;
         vTaskDelayUntil(&wake, period);
     }
 
-    blinds::motor::debug::set_brake(side);
+    hvmrf01::motor::debug::set_brake(side);
     printf("RAMP_END samples=%d\n", emitted);
     return 0;
 }
@@ -411,8 +411,8 @@ int cmd_trace(int argc, char** argv)
 
     int emitted = 0;
     for (int i = 0; i < total_samples; i++) {
-        const auto l = blinds::encoder::count(blinds::motor::Side::Left);
-        const auto r = blinds::encoder::count(blinds::motor::Side::Right);
+        const auto l = hvmrf01::encoder::count(hvmrf01::motor::Side::Left);
+        const auto r = hvmrf01::encoder::count(hvmrf01::motor::Side::Right);
         const auto t_ms = pdTICKS_TO_MS(xTaskGetTickCount() - t0_ticks);
         printf("%lu,%ld,%ld\n",
                static_cast<unsigned long>(t_ms),
@@ -431,7 +431,7 @@ int cmd_trace(int argc, char** argv)
 int cmd_motion(int argc, char** argv)
 {
     if (argc >= 2 && std::string_view{argv[1]} == "stop") {
-        blinds::motion::stop();
+        hvmrf01::motion::stop();
         printf("motion: stopped\n");
         return 0;
     }
@@ -445,18 +445,18 @@ int cmd_motion(int argc, char** argv)
         return 1;
     }
     const std::string_view dir{argv[2]};
-    blinds::motion::Direction d;
+    hvmrf01::motion::Direction d;
     if (dir == "raise" || dir == "up" || dir == "open") {
-        d = blinds::motion::Direction::Raise;
+        d = hvmrf01::motion::Direction::Raise;
     } else if (dir == "lower" || dir == "down" || dir == "close") {
-        d = blinds::motion::Direction::Lower;
+        d = hvmrf01::motion::Direction::Lower;
     } else {
         printf("direction must be raise|lower\n");
         return 1;
     }
-    blinds::motion::set_target(rpm, d);
+    hvmrf01::motion::set_target(rpm, d);
     printf("motion: target = %d RPM %s\n", rpm,
-           d == blinds::motion::Direction::Raise ? "raise" : "lower");
+           d == hvmrf01::motion::Direction::Raise ? "raise" : "lower");
     return 0;
 }
 
@@ -476,10 +476,10 @@ int cmd_sweep(int argc, char** argv)
 
     printf("sweep %d → %d Hz, step %d, dwell %d ms. Driving forward.\n",
            start_hz, end_hz, step_hz, dwell_ms);
-    blinds::motor::debug::set_forward();
+    hvmrf01::motor::debug::set_forward();
 
     for (int hz = start_hz; hz <= end_hz; hz += step_hz) {
-        if (!blinds::motor::debug::set_freq_hz(hz)) {
+        if (!hvmrf01::motor::debug::set_freq_hz(hz)) {
             printf("  %d Hz rejected, stopping sweep\n", hz);
             break;
         }
@@ -487,7 +487,7 @@ int cmd_sweep(int argc, char** argv)
         vTaskDelay(pdMS_TO_TICKS(dwell_ms));
     }
 
-    blinds::motor::debug::set_brake();
+    hvmrf01::motor::debug::set_brake();
     printf("sweep done; braked.\n");
     return 0;
 }
@@ -524,7 +524,7 @@ void start()
     esp_console_repl_t* repl = nullptr;
 
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    repl_config.prompt              = "blinds> ";
+    repl_config.prompt              = "hv-mrf-01> ";
     repl_config.max_cmdline_length  = 80;
 
     esp_console_dev_usb_serial_jtag_config_t hw_config =
@@ -538,4 +538,4 @@ void start()
     ESP_LOGI(TAG, "REPL ready on USB-Serial-JTAG");
 }
 
-}  // namespace blinds::console
+}  // namespace hvmrf01::console

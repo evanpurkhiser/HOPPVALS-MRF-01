@@ -6,7 +6,7 @@
 //
 // Architecture: a 100 Hz FreeRTOS task samples both encoders, computes
 // per-motor measured RPM, runs an independent PI+feedforward speed loop
-// per motor, and drives the motor PWM via `blinds::motor::raw::drive`.
+// per motor, and drives the motor PWM via `hvmrf01::motor::raw::drive`.
 //
 // Cross-coupled sync: each motor's RPM setpoint is biased by K_SYNC ×
 // (count_other - count_me). The lagging motor speeds up and the leading
@@ -20,7 +20,7 @@
 // Scope (v0): constant target RPM in one direction. Trajectory generation
 // (trapezoid + easing, spring) and position targeting layer on top later.
 
-namespace blinds::motion {
+namespace hvmrf01::motion {
 
 enum class Direction : std::uint8_t { Raise, Lower, Stop };
 
@@ -39,4 +39,4 @@ void stop();
 // encoder are up.
 void start();
 
-}  // namespace blinds::motion
+}  // namespace hvmrf01::motion

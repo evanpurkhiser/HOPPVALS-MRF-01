@@ -1,4 +1,4 @@
-#include "blinds/current_sense.hpp"
+#include "hv-mrf-01/current_sense.hpp"
 
 #include <array>
 #include <atomic>
@@ -14,13 +14,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-namespace blinds::current_sense {
+namespace hvmrf01::current_sense {
 
 ESP_EVENT_DEFINE_BASE(EVENTS);
 
 namespace {
 
-constexpr auto* TAG = "blinds.current";
+constexpr auto* TAG = "hv-mrf-01.current";
 
 // ── IPROPI → current conversion (PCB values, DRV8876 datasheet §7.3.3.1) ───
 // V_IPROPI = I_OUT × A_IPROPI × R_IPROPI = I_OUT × 1000 µA/A × 560 Ω
@@ -174,4 +174,4 @@ std::int32_t voltage_mv(Side s)
     return latest_mv[idx(s)].load();
 }
 
-}  // namespace blinds::current_sense
+}  // namespace hvmrf01::current_sense

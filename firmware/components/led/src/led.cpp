@@ -1,4 +1,4 @@
-#include "blinds/led.hpp"
+#include "hv-mrf-01/led.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -11,13 +11,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 
-#include "blinds/zigbee.hpp"
+#include "hv-mrf-01/zigbee.hpp"
 
-namespace blinds::led {
+namespace hvmrf01::led {
 
 namespace {
 
-constexpr auto* TAG = "blinds.led";
+constexpr auto* TAG = "hv-mrf-01.led";
 
 // XIAO ESP32-C6 user LED is on GPIO15, wired active-low (LED to VCC,
 // MCU pin sinks current). We invert duty cycles internally so the
@@ -115,9 +115,9 @@ void start_effect(Effect e)
     }
 }
 
-Effect map_zcl_effect(blinds::zigbee::IdentifyEffect e) noexcept
+Effect map_zcl_effect(hvmrf01::zigbee::IdentifyEffect e) noexcept
 {
-    using ZE = blinds::zigbee::IdentifyEffect;
+    using ZE = hvmrf01::zigbee::IdentifyEffect;
     switch (e) {
     case ZE::Blink:         return Effect::Blink;
     case ZE::Breathe:       return Effect::Breathe;
@@ -131,11 +131,11 @@ Effect map_zcl_effect(blinds::zigbee::IdentifyEffect e) noexcept
 
 void on_identify(void*, esp_event_base_t, std::int32_t id, void* data)
 {
-    if (static_cast<blinds::zigbee::Event>(id) != blinds::zigbee::Event::Identify) {
+    if (static_cast<hvmrf01::zigbee::Event>(id) != hvmrf01::zigbee::Event::Identify) {
         return;
     }
     const auto raw    = *static_cast<std::uint8_t*>(data);
-    const auto zcl_e  = static_cast<blinds::zigbee::IdentifyEffect>(raw);
+    const auto zcl_e  = static_cast<hvmrf01::zigbee::IdentifyEffect>(raw);
     const auto effect = map_zcl_effect(zcl_e);
     ESP_LOGI(TAG, "Identify effect 0x%02x → %d", raw, static_cast<int>(effect));
     start_effect(effect);
@@ -178,12 +178,12 @@ void start()
     configASSERT(tick_timer != nullptr);
     xTimerStart(tick_timer, 0);
 
-    ESP_ERROR_CHECK(esp_event_handler_register(blinds::zigbee::EVENTS,
+    ESP_ERROR_CHECK(esp_event_handler_register(hvmrf01::zigbee::EVENTS,
                                                static_cast<std::int32_t>(
-                                                   blinds::zigbee::Event::Identify),
+                                                   hvmrf01::zigbee::Event::Identify),
                                                &on_identify, nullptr));
     ESP_LOGI(TAG, "LED driver up on GPIO%d (active-%s)", LED_GPIO,
              LED_ACTIVE_LOW ? "low" : "high");
 }
 
-}  // namespace blinds::led
+}  // namespace hvmrf01::led

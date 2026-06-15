@@ -13,8 +13,8 @@
 //   state                        — print current pin levels + duty + freq
 //   help                         — list all commands
 
-namespace blinds::console {
+namespace hvmrf01::console {
 
 void start();
 
-}  // namespace blinds::console
+}  // namespace hvmrf01::console

@@ -4,7 +4,7 @@
 
 #include "esp_event.h"
 
-namespace blinds::zigbee {
+namespace hvmrf01::zigbee {
 
 // All events published by the Zigbee component flow through this esp_event
 // base. The application registers handlers via esp_event_handler_register;
@@ -87,4 +87,4 @@ enum class IdentifyEffect : std::uint8_t
 // must already exist before calling.
 void start();
 
-} // namespace blinds::zigbee
+} // namespace hvmrf01::zigbee

@@ -4,7 +4,7 @@
 
 #include "esp_event.h"
 
-#include "blinds/motor.hpp"
+#include "hv-mrf-01/motor.hpp"
 
 // Motor current sensing via the DRV8876 IPROPI pins. Each driver mirrors its
 // output current onto IPROPI, which the PCB turns into a voltage across a
@@ -19,10 +19,10 @@
 // current for confident stall detection. Readings are the latest instantaneous
 // sample; callers that want a stable number should average over a window.
 
-namespace blinds::current_sense {
+namespace hvmrf01::current_sense {
 
 // Reuse the motor::Side enum so callers address either motor uniformly.
-using Side = blinds::motor::Side;
+using Side = hvmrf01::motor::Side;
 
 // Overcurrent notifications, posted when a motor's current stays above the
 // fault threshold for the debounce window. Fire-and-forget; subscribe via
@@ -46,4 +46,4 @@ std::int32_t current_ma(Side s);
 // Latest raw IPROPI voltage in millivolts (diagnostic / calibration aid).
 std::int32_t voltage_mv(Side s);
 
-}  // namespace blinds::current_sense
+}  // namespace hvmrf01::current_sense

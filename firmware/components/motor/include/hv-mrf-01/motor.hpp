@@ -22,7 +22,7 @@
 //   - Cover Stop  → motion::stop()
 //   - GoToPercent → not implemented yet; returns Failure.
 
-namespace blinds::motor {
+namespace hvmrf01::motor {
 
 // Which physical motor — left or right side of the blind. Cover commands
 // always drive both in lockstep; the debug + raw surfaces let you target one.
@@ -75,4 +75,4 @@ void print_state();                                // dumps both motors
 
 }  // namespace debug
 
-}  // namespace blinds::motor
+}  // namespace hvmrf01::motor

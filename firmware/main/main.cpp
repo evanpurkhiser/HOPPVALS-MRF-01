@@ -10,21 +10,21 @@
 #include "esp_event.h"
 #include "esp_log.h"
 
-#include "blinds/console.hpp"
-#include "blinds/current_sense.hpp"
-#include "blinds/encoder.hpp"
-#include "blinds/led.hpp"
-#include "blinds/motion.hpp"
-#include "blinds/motor.hpp"
-#include "blinds/zigbee.hpp"
+#include "hv-mrf-01/console.hpp"
+#include "hv-mrf-01/current_sense.hpp"
+#include "hv-mrf-01/encoder.hpp"
+#include "hv-mrf-01/led.hpp"
+#include "hv-mrf-01/motion.hpp"
+#include "hv-mrf-01/motor.hpp"
+#include "hv-mrf-01/zigbee.hpp"
 
 namespace {
 
-constexpr auto *TAG = "blinds.app";
+constexpr auto *TAG = "hv-mrf-01.app";
 
 void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
 {
-    using blinds::zigbee::Event;
+    using hvmrf01::zigbee::Event;
     switch (static_cast<Event>(id)) {
     case Event::JoinedNetwork:
         ESP_LOGI(TAG, "→ joined zigbee network");
@@ -45,15 +45,15 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
 extern "C" void app_main()
 {
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_event_handler_register(blinds::zigbee::EVENTS,
+    ESP_ERROR_CHECK(esp_event_handler_register(hvmrf01::zigbee::EVENTS,
                                                ESP_EVENT_ANY_ID, &on_zigbee_event,
                                                nullptr));
-    ESP_LOGI(TAG, "Starting blinds firmware");
-    blinds::motor::start();          // registers cover handlers, enables drivers
-    blinds::encoder::start();        // PCNT quadrature readers for both motors
-    blinds::current_sense::start();  // ADC1 IPROPI sampling task (100 Hz)
-    blinds::motion::start();         // 100 Hz closed-loop speed control task
-    blinds::led::start();
-    blinds::console::start();        // serial REPL — needs motor + encoder up first
-    blinds::zigbee::start();
+    ESP_LOGI(TAG, "Starting hv-mrf-01 firmware");
+    hvmrf01::motor::start();          // registers cover handlers, enables drivers
+    hvmrf01::encoder::start();        // PCNT quadrature readers for both motors
+    hvmrf01::current_sense::start();  // ADC1 IPROPI sampling task (100 Hz)
+    hvmrf01::motion::start();         // 100 Hz closed-loop speed control task
+    hvmrf01::led::start();
+    hvmrf01::console::start();        // serial REPL — needs motor + encoder up first
+    hvmrf01::zigbee::start();
 }

@@ -1,4 +1,4 @@
-#include "blinds/motion.hpp"
+#include "hv-mrf-01/motion.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,14 +10,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "blinds/encoder.hpp"
-#include "blinds/motor.hpp"
+#include "hv-mrf-01/encoder.hpp"
+#include "hv-mrf-01/motor.hpp"
 
-namespace blinds::motion {
+namespace hvmrf01::motion {
 
 namespace {
 
-constexpr auto* TAG = "blinds.motion";
+constexpr auto* TAG = "hv-mrf-01.motion";
 
 // ── Tuning constants (DESIGN.md "Closed-loop speed control") ──────────────
 // Feedforward slope. Empirical iteration:
@@ -297,4 +297,4 @@ void start()
     ESP_LOGI(TAG, "control loop started at %d Hz", CONTROL_HZ);
 }
 
-}  // namespace blinds::motion
+}  // namespace hvmrf01::motion

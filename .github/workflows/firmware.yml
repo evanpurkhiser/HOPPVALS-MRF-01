@@ -34,9 +34,9 @@ jobs:
       - name: Upload firmware binaries
         uses: actions/upload-artifact@v4
         with:
-          name: blinds-firmware
+          name: hv-mrf-01-firmware
           path: |
-            firmware/build/blinds.bin
-            firmware/build/blinds.elf
+            firmware/build/hv-mrf-01.bin
+            firmware/build/hv-mrf-01.elf
             firmware/build/bootloader/bootloader.bin
             firmware/build/partition_table/partition-table.bin

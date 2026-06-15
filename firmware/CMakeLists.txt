@@ -9,4 +9,4 @@ set(CMAKE_CXX_EXTENSIONS ON)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-project(blinds)
+project(hv-mrf-01)

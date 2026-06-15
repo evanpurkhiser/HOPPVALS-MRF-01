@@ -1,4 +1,4 @@
-#include "blinds/motor.hpp"
+#include "hv-mrf-01/motor.hpp"
 
 #include <array>
 #include <cstdint>
@@ -9,14 +9,14 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
-#include "blinds/motion.hpp"
-#include "blinds/zigbee.hpp"
+#include "hv-mrf-01/motion.hpp"
+#include "hv-mrf-01/zigbee.hpp"
 
-namespace blinds::motor {
+namespace hvmrf01::motor {
 
 namespace {
 
-constexpr auto* TAG = "blinds.motor";
+constexpr auto* TAG = "hv-mrf-01.motor";
 
 // ── Per-motor hardware mapping (PCB netlist, PH/EN mode) ──────────────────
 struct Motor
@@ -310,4 +310,4 @@ void print_state()
 
 }  // namespace debug
 
-}  // namespace blinds::motor
+}  // namespace hvmrf01::motor
