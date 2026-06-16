@@ -17,6 +17,8 @@
 
 #include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/console.hpp"
+#include "hv-mrf-01/motion.hpp"
+#include "hv-mrf-01/motor.hpp"
 
 namespace hvmrf01::http_debug {
 
@@ -165,6 +167,12 @@ esp_err_t ota_handler(httpd_req_t* req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body / missing Content-Length");
         return ESP_FAIL;
     }
+
+    // De-energize the motors for the duration of the write + reboot: halt the
+    // control loop so it stops issuing drives, then pull nSLEEP low so the
+    // drivers can't run regardless of what the incoming image does on boot.
+    motion::stop();
+    motor::disable();
 
     // Confirm the running image before begin: esp_ota_begin refuses to run from
     // an unverified app, so without this a device sitting in debug mode on a

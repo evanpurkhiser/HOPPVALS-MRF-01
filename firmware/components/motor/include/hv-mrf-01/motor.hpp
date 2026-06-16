@@ -33,6 +33,12 @@ enum class Side : std::uint8_t { Left, Right, Both };
 // Call once from app_main, before zigbee::start().
 void start();
 
+// Put both drivers to sleep (nSLEEP low): outputs go Hi-Z and the motors
+// cannot be driven until woken again. Stop the motion controller first, or its
+// next tick re-wakes nSLEEP. Used to guarantee motors are de-energized during
+// an OTA write + reboot.
+void disable();
+
 // ── Raw drive surface ────────────────────────────────────────────────────
 // The closed-loop motion controller calls these every tick. They behave
 // like the debug surface (no auto-stop, no state machine), but skip the

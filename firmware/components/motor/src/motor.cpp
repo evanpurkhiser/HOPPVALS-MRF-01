@@ -225,6 +225,15 @@ void start()
              MOTOR_L.en, MOTOR_L.ph, MOTOR_R.en, MOTOR_R.ph, MOTOR_SLEEP);
 }
 
+void disable()
+{
+    // nSLEEP low: both H-bridges go Hi-Z and stay there until a drive wakes
+    // them. Stop the motion controller first so its 100 Hz loop doesn't wake
+    // nSLEEP back up on the next tick.
+    set_sleep(false);
+    ESP_LOGI(TAG, "motor drivers disabled (nSLEEP low)");
+}
+
 namespace raw {
 
 void drive(Side s, Direction d, int duty_pct)
