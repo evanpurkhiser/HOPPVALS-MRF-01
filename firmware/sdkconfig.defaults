@@ -22,6 +22,13 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_HTTPD_WS_SUPPORT=y
 
 #
+# OTA: a freshly-flashed image boots in "pending verify" and must mark itself
+# valid once healthy, or the bootloader rolls back to the previous slot — so a
+# bad push to a mounted, USB-less device self-heals instead of bricking it.
+#
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+#
 # Zigbee
 #
 CONFIG_ZB_ENABLED=y

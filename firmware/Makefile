@@ -22,7 +22,13 @@ else
   PORT_ARG := -p $(PORT)
 endif
 
-.PHONY: help build flash monitor flash-monitor clean fullclean menuconfig erase set-target size reconfigure shell
+# Over-the-air push: upload the built image to a device in WiFi debug mode.
+# Find IP in the device's debug-mode boot log. Add `?normal=1` via NORMAL=1 to
+# boot back into Zigbee instead of staying in debug mode for the next push.
+OTA_BIN ?= build/hv-mrf-01.bin
+OTA_URL  = http://$(IP)/ota$(if $(NORMAL),?normal=1,)
+
+.PHONY: help build flash monitor flash-monitor clean fullclean menuconfig erase set-target size reconfigure shell ota
 
 help:
 	@echo "Targets:"
@@ -30,6 +36,7 @@ help:
 	@echo "  flash          - flash firmware over USB-JTAG (PORT=$(PORT))"
 	@echo "  monitor        - attach serial monitor (Ctrl-] to exit)"
 	@echo "  flash-monitor  - flash then immediately attach monitor"
+	@echo "  ota IP=<ip>    - push firmware over WiFi to a device in debug mode (NORMAL=1 to exit debug)"
 	@echo "  menuconfig     - interactive Kconfig UI"
 	@echo "  erase          - full-chip erase (wipes NVS, Zigbee join state, etc.)"
 	@echo "  clean          - remove build artifacts for current target"
@@ -49,6 +56,11 @@ monitor:
 
 flash-monitor:
 	@$(IDF_RUN) idf.py $(PORT_ARG) flash monitor
+
+ota:
+	@test -n "$(IP)" || { echo "usage: make ota IP=<device-ip> [NORMAL=1]"; exit 1; }
+	@echo "Pushing $(OTA_BIN) → $(OTA_URL)"
+	curl -fsS --data-binary @"$(OTA_BIN)" "$(OTA_URL)"
 
 menuconfig:
 	@$(IDF_RUN) idf.py menuconfig

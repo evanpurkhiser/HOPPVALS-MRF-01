@@ -18,9 +18,15 @@
 namespace hvmrf01::http_debug {
 
 // Enter debug mode: bring up WiFi STA, and on success start the websocket
-// console server. On WiFi failure this reboots (back into normal mode) and
-// does not return. Call once from app_main; the HTTP server runs in its own
-// task afterward, so this returns once the server is up.
+// console + OTA-push server. On WiFi failure this reboots (back into normal
+// mode) and does not return. Call once from app_main; the HTTP server runs in
+// its own task afterward, so this returns once the server is up.
 void run();
+
+// Mark the running image valid so the bootloader won't roll it back (and so the
+// next OTA is permitted). A no-op unless the image is in "pending verify" after
+// an OTA. Called here once the debug server is up; call it from normal mode too
+// once the firmware proves healthy (e.g. after the Zigbee network rejoin).
+void confirm_running_image();
 
 }  // namespace hvmrf01::http_debug

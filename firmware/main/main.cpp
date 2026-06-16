@@ -9,6 +9,7 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_system.h"
 
 #include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/console.hpp"
@@ -30,6 +31,9 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
     switch (static_cast<Event>(id)) {
     case Event::JoinedNetwork:
         ESP_LOGI(TAG, "→ joined zigbee network");
+        // Rejoining proves a freshly-OTA'd image is healthy in normal mode;
+        // confirm it so the bootloader won't roll back on the next reboot.
+        hvmrf01::http_debug::confirm_running_image();
         break;
     case Event::LeftNetwork:
         ESP_LOGI(TAG, "→ left zigbee network");
@@ -38,6 +42,11 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
         const auto effect = *static_cast<std::uint8_t *>(data);
         ESP_LOGI(TAG, "→ identify effect 0x%02x", effect);
     } break;
+    case Event::EnterDebug:
+        ESP_LOGW(TAG, "→ Debug Mode switch on; arming debug boot and rebooting");
+        static_cast<void>(hvmrf01::config::request_debug_boot());
+        esp_restart();
+        break;
     }
 }
 
