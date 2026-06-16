@@ -10,6 +10,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 
 #include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/console.hpp"
@@ -25,12 +26,31 @@ namespace {
 
 constexpr auto *TAG = "hv-mrf-01.app";
 
+// If a normal boot never joins the Zigbee network within this window, fall back
+// to WiFi debug mode — so a Zigbee-side fault (or a regression that breaks the
+// join path) can't strand a mounted device that has no USB access. Generous
+// enough not to false-fire on a slow commission; the JoinedNetwork handler
+// cancels it on success.
+constexpr std::int64_t RECOVERY_TIMEOUT_US = 5LL * 60 * 1000 * 1000;  // 5 minutes
+esp_timer_handle_t recovery_timer = nullptr;
+
+void enter_debug_recovery(void *)
+{
+    ESP_LOGW(TAG, "no Zigbee join within recovery window; rebooting into WiFi debug mode");
+    static_cast<void>(hvmrf01::config::request_debug_boot());
+    esp_restart();
+}
+
 void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
 {
     using hvmrf01::zigbee::Event;
     switch (static_cast<Event>(id)) {
     case Event::JoinedNetwork:
         ESP_LOGI(TAG, "→ joined zigbee network");
+        // We're reachable over Zigbee, so the recovery fallback isn't needed.
+        if (recovery_timer != nullptr) {
+            esp_timer_stop(recovery_timer);
+        }
         // Rejoining proves a freshly-OTA'd image is healthy in normal mode;
         // confirm it so the bootloader won't roll back on the next reboot.
         hvmrf01::http_debug::confirm_running_image();
@@ -84,4 +104,15 @@ extern "C" void app_main()
 
     hvmrf01::console::start();        // serial REPL — needs motor + encoder up first
     hvmrf01::zigbee::start();
+
+    // Arm the recovery fallback; the JoinedNetwork handler cancels it on join.
+    const esp_timer_create_args_t recovery_args{
+        .callback              = &enter_debug_recovery,
+        .arg                   = nullptr,
+        .dispatch_method       = ESP_TIMER_TASK,
+        .name                  = "zb_recovery",
+        .skip_unhandled_events = false,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&recovery_args, &recovery_timer));
+    ESP_ERROR_CHECK(esp_timer_start_once(recovery_timer, RECOVERY_TIMEOUT_US));
 }
