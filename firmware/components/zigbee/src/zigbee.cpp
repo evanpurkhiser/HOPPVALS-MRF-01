@@ -17,6 +17,7 @@
 #include "ezbee/zcl/cluster/basic_desc.h"
 #include "ezbee/zcl/cluster/identify.h"
 #include "ezbee/zcl/cluster/identify_desc.h"
+#include "ezbee/zcl/cluster/on_off_desc.h"
 #include "ezbee/zcl/cluster/window_covering_desc.h"
 
 namespace hvmrf01::zigbee {
@@ -34,6 +35,7 @@ constexpr auto MODEL_IDENTIFIER            = "\x09"
                                              "HV-MRF-01";
 
 constexpr std::uint8_t  EP_WINDOW_COVERING = 10;
+constexpr std::uint8_t  EP_DEBUG_SWITCH    = 11;
 constexpr std::uint32_t PRIMARY_CHANNEL    = 1U << 13;    // ch 13 first
 constexpr std::uint32_t SECONDARY_CHANNELS = 0x07FFF800U; // ch 11..26
 constexpr auto          STORAGE_PARTITION  = "zb_storage";
@@ -200,6 +202,24 @@ void handle_set_attr(ezb_zcl_set_attr_value_message_t* msg) noexcept
     }
 
     switch (msg->info.cluster_id) {
+    case EZB_ZCL_CLUSTER_ID_ON_OFF:
+        // The "Debug Mode" switch endpoint. Turning it on is the untethered
+        // entry point into WiFi debug mode: post the event and let app_main
+        // arm the one-shot flag and reboot (keeps Zigbee free of that policy).
+        // Gate on the specific endpoint and validate the payload so an On/Off
+        // write to some other future endpoint can't reboot us out of Zigbee.
+        if (msg->info.dst_ep == EP_DEBUG_SWITCH &&
+            msg->in.attribute.id == EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID &&
+            msg->in.attribute.data.value != nullptr &&
+            msg->in.attribute.data.size >= 1) {
+            const bool on = *static_cast<bool*>(msg->in.attribute.data.value);
+            ESP_LOGI(TAG, "Debug Mode switch = %s", on ? "on" : "off");
+            if (on) {
+                post(EnterDebug);
+            }
+        }
+        break;
+
     case EZB_ZCL_CLUSTER_ID_IDENTIFY:
         // HA's "Identify" device action writes the IdentifyTime attribute.
         // The SDK auto-decrements it once per second; any nonzero value here
@@ -304,6 +324,15 @@ ezb_af_ep_desc_t build_window_covering_endpoint()
     return ep;
 }
 
+// A second endpoint exposing a single On/Off server cluster. ZHA surfaces it as
+// a switch entity ("Debug Mode"); turning it on is the untethered trigger to
+// reboot into WiFi debug mode. See handle_set_attr's ON_OFF case.
+ezb_af_ep_desc_t build_debug_switch_endpoint()
+{
+    auto cfg = ezb_zha_mains_power_outlet_config_t EZB_ZHA_MAINS_POWER_OUTLET_CONFIG();
+    return ezb_zha_create_mains_power_outlet(EP_DEBUG_SWITCH, &cfg);
+}
+
 esp_err_t register_endpoints()
 {
     auto dev = ezb_af_create_device_desc();
@@ -312,6 +341,10 @@ esp_err_t register_endpoints()
     auto wc = build_window_covering_endpoint();
     ESP_RETURN_ON_FALSE(wc != nullptr, ESP_ERR_NO_MEM, TAG, "window covering ep failed");
     ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev, wc));
+
+    auto dbg = build_debug_switch_endpoint();
+    ESP_RETURN_ON_FALSE(dbg != nullptr, ESP_ERR_NO_MEM, TAG, "debug switch ep failed");
+    ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev, dbg));
 
     ESP_ERROR_CHECK(ezb_af_device_desc_register(dev));
     ezb_zcl_core_action_handler_register(zcl_action_handler);

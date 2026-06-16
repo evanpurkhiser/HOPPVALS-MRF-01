@@ -20,6 +20,7 @@ enum class Event : std::int32_t
     JoinedNetwork, // no data
     LeftNetwork,   // no data
     Identify,      // data: std::uint8_t ZCL IdentifyEffect ID
+    EnterDebug,    // no data: the "Debug Mode" switch was turned on
 };
 
 // ── Commands: synchronous handler interface ──────────────────────────────
