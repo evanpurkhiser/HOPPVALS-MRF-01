@@ -1,20 +1,39 @@
 #pragma once
 
-// Interactive serial REPL over the XIAO's native USB-Serial-JTAG. Useful
-// for hands-on motor tuning (PWM duty, frequency, direction) without
-// reflashing between iterations.
+#include <string>
+
+// Command console for the firmware. The same command set is reachable two
+// ways: an interactive REPL over the XIAO's native USB-Serial-JTAG (normal
+// bench use), and one-shot dispatch from the http_debug websocket (remote use
+// in WiFi debug mode). Command output goes through emit(), which the websocket
+// path captures into a string instead of writing to the serial port.
 //
-// Connect from your host with:  make monitor   (or screen /dev/cu.usbmodem* 115200)
+// Connect over USB with:  make monitor  (or screen /dev/cu.usbmodem* 115200)
 //
 // Commands once attached:
-//   fwd / rev / brake / coast    — drive Motor A in that mode
+//   fwd / rev / brake / coast    — drive a motor in that mode
 //   pwm <0-100>                  — set PWM duty %
 //   freq <hz>                    — set PWM frequency (e.g. 25000)
-//   state                        — print current pin levels + duty + freq
+//   spin / ramp / trace          — open-loop bench tests with CSV output
+//   motion <rpm> raise|lower     — closed-loop speed control
+//   config                       — view/set/save persisted configuration
+//   debug                        — reboot into WiFi debug mode
+//   state / enc / cur / rpm      — read motor + sensor state
 //   help                         — list all commands
 
 namespace hvmrf01::console {
 
+// Initialize the console and register all commands, then start the interactive
+// USB-Serial-JTAG REPL. Used in normal mode. Call once, after motor + encoder.
 void start();
+
+// Initialize the console and register all commands *without* starting the USB
+// REPL — for debug mode, where the websocket is the transport. Call once
+// before run_line(). Mutually exclusive with start() (one console per boot).
+void init_for_remote();
+
+// Run a single command line, returning everything the command emitted as a
+// string. Thread-safe via an internal lock; intended for the websocket handler.
+std::string run_line(const std::string& line);
 
 }  // namespace hvmrf01::console

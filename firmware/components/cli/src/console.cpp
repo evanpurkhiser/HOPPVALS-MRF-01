@@ -1,15 +1,21 @@
 #include "hv-mrf-01/console.hpp"
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <mutex>
+#include <string>
 #include <string_view>
 
 #include "esp_console.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/current_sense.hpp"
 #include "hv-mrf-01/encoder.hpp"
 #include "hv-mrf-01/motion.hpp"
@@ -20,6 +26,54 @@ namespace hvmrf01::console {
 namespace {
 
 constexpr auto* TAG = "hv-mrf-01.console";
+
+// ── Output capture ────────────────────────────────────────────────────────
+//
+// Commands print via emit() rather than printf(). Normally that goes straight
+// to stdout (the USB-JTAG REPL). While run_line() executes a command on behalf
+// of a remote transport, it points capture_buf at a string so the output is
+// collected and returned instead.
+//
+// capture_buf is thread_local: the target belongs to whichever task is running
+// run_line(), so a command dispatched on one task can never redirect output
+// that another task is producing. capture_mutex separately serializes
+// run_line() itself, because esp_console_run() parses into shared internal
+// state and is not re-entrant.
+std::mutex                capture_mutex;
+thread_local std::string* capture_buf = nullptr;
+
+// printf-compatible output for command implementations. Captured to a string
+// during remote dispatch, otherwise written to stdout.
+int emit(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+
+    if (capture_buf == nullptr) {
+        const int n = std::vprintf(fmt, args);
+        va_end(args);
+        return n;
+    }
+
+    char    stack[256];
+    va_list copy;
+    va_copy(copy, args);
+    const int n = std::vsnprintf(stack, sizeof(stack), fmt, copy);
+    va_end(copy);
+
+    if (n >= 0 && static_cast<std::size_t>(n) < sizeof(stack)) {
+        capture_buf->append(stack, static_cast<std::size_t>(n));
+    } else if (n >= 0) {
+        // Output didn't fit the stack buffer; render it exactly once more into
+        // a right-sized heap buffer.
+        std::string big(static_cast<std::size_t>(n) + 1, '\0');
+        std::vsnprintf(big.data(), big.size(), fmt, args);
+        capture_buf->append(big.data(), static_cast<std::size_t>(n));
+    }
+
+    va_end(args);
+    return n;
+}
 
 // Parse an optional "L" / "R" / "both" arg; default to Both.
 hvmrf01::motor::Side parse_side(int argc, char** argv, int idx)
@@ -41,7 +95,7 @@ int cmd_fwd(int argc, char** argv)
 {
     const auto s = parse_side(argc, argv, 1);
     hvmrf01::motor::debug::set_forward(s);
-    printf("→ %s forward at current duty\n", side_label(s));
+    emit("→ %s forward at current duty\n", side_label(s));
     return 0;
 }
 
@@ -49,7 +103,7 @@ int cmd_rev(int argc, char** argv)
 {
     const auto s = parse_side(argc, argv, 1);
     hvmrf01::motor::debug::set_reverse(s);
-    printf("→ %s reverse at current duty\n", side_label(s));
+    emit("→ %s reverse at current duty\n", side_label(s));
     return 0;
 }
 
@@ -57,7 +111,7 @@ int cmd_brake(int argc, char** argv)
 {
     const auto s = parse_side(argc, argv, 1);
     hvmrf01::motor::debug::set_brake(s);
-    printf("→ %s brake (EN=0, active hold)\n", side_label(s));
+    emit("→ %s brake (EN=0, active hold)\n", side_label(s));
     return 0;
 }
 
@@ -65,7 +119,7 @@ int cmd_coast(int, char**)
 {
     // Coast is the shared nSLEEP going low — inherently both motors.
     hvmrf01::motor::debug::set_coast();
-    printf("→ coast (nSLEEP low, both motors Hi-Z)\n");
+    emit("→ coast (nSLEEP low, both motors Hi-Z)\n");
     return 0;
 }
 
@@ -74,7 +128,7 @@ int cmd_coast(int, char**)
 int cmd_enable(int argc, char** argv)
 {
     if (argc < 2) {
-        printf("driver enable (nSLEEP) = %s\n",
+        emit("driver enable (nSLEEP) = %s\n",
                hvmrf01::motor::debug::enabled() ? "on" : "off");
         return 0;
     }
@@ -82,43 +136,43 @@ int cmd_enable(int argc, char** argv)
     const bool on = (a == "on" || a == "1" || a == "true");
     const bool off = (a == "off" || a == "0" || a == "false");
     if (!on && !off) {
-        printf("usage: enable [on|off]\n");
+        emit("usage: enable [on|off]\n");
         return 1;
     }
     hvmrf01::motor::debug::set_enabled(on);
-    printf("driver enable (nSLEEP) = %s\n", on ? "on" : "off");
+    emit("driver enable (nSLEEP) = %s\n", on ? "on" : "off");
     return 0;
 }
 
 int cmd_pwm(int argc, char** argv)
 {
     if (argc < 2) {
-        printf("usage: pwm <0-100> [L|R]\n");
+        emit("usage: pwm <0-100> [L|R]\n");
         return 1;
     }
     const int pct = std::atoi(argv[1]);
     if (pct < 0 || pct > 100) {
-        printf("out of range: 0-100\n");
+        emit("out of range: 0-100\n");
         return 1;
     }
     const auto s = parse_side(argc, argv, 2);
     hvmrf01::motor::debug::set_duty_pct(pct, s);
-    printf("duty = %d%% (%s)\n", pct, side_label(s));
+    emit("duty = %d%% (%s)\n", pct, side_label(s));
     return 0;
 }
 
 int cmd_freq(int argc, char** argv)
 {
     if (argc != 2) {
-        printf("usage: freq <hz>\n");
+        emit("usage: freq <hz>\n");
         return 1;
     }
     const int hz = std::atoi(argv[1]);
     if (!hvmrf01::motor::debug::set_freq_hz(hz)) {
-        printf("freq %d Hz rejected (try 100..200000)\n", hz);
+        emit("freq %d Hz rejected (try 100..200000)\n", hz);
         return 1;
     }
-    printf("freq = %d Hz\n", hz);
+    emit("freq = %d Hz\n", hz);
     return 0;
 }
 
@@ -137,7 +191,7 @@ int cmd_state(int, char**)
 int cmd_enc(int argc, char** argv)
 {
     if (argc == 1) {
-        printf("L=%ld R=%ld\n",
+        emit("L=%ld R=%ld\n",
                static_cast<long>(hvmrf01::encoder::count(hvmrf01::motor::Side::Left)),
                static_cast<long>(hvmrf01::encoder::count(hvmrf01::motor::Side::Right)));
         return 0;
@@ -145,7 +199,7 @@ int cmd_enc(int argc, char** argv)
     if (std::string_view{argv[1]} == "reset") {
         const auto s = parse_side(argc, argv, 2);
         hvmrf01::encoder::reset(s);
-        printf("reset %s\n", side_label(s));
+        emit("reset %s\n", side_label(s));
         return 0;
     }
     if (std::string_view{argv[1]} == "poll") {
@@ -162,7 +216,7 @@ int cmd_enc(int argc, char** argv)
             const auto cps      = delta * 5;  // 200ms window → counts/sec
             prev                = now;
             const auto elapsed  = pdTICKS_TO_MS(xTaskGetTickCount() - start);
-            printf("[%s] t=%lums  count=%ld  Δ=%ld  cps=%ld\n",
+            emit("[%s] t=%lums  count=%ld  Δ=%ld  cps=%ld\n",
                    side_label(s),
                    static_cast<unsigned long>(elapsed),
                    static_cast<long>(now), static_cast<long>(delta),
@@ -173,10 +227,10 @@ int cmd_enc(int argc, char** argv)
     // Single-arg side ("enc L" / "enc R").
     const auto s = parse_side(argc, argv, 1);
     if (s == hvmrf01::motor::Side::Both) {
-        printf("usage: enc | enc [L|R] | enc reset [L|R] | enc poll [samples] [L|R]\n");
+        emit("usage: enc | enc [L|R] | enc reset [L|R] | enc poll [samples] [L|R]\n");
         return 1;
     }
-    printf("%s = %ld\n", side_label(s),
+    emit("%s = %ld\n", side_label(s),
            static_cast<long>(hvmrf01::encoder::count(s)));
     return 0;
 }
@@ -191,7 +245,7 @@ int cmd_rpm(int argc, char** argv)
     const auto end   = hvmrf01::encoder::count(s);
     const auto cps   = end - start;
     const auto rpm   = (cps * 60) / hvmrf01::encoder::COUNTS_PER_OUTPUT_REV;
-    printf("[%s] Δcount=%ld cps=%ld output_rpm=%ld (motor_rpm=%ld)\n",
+    emit("[%s] Δcount=%ld cps=%ld output_rpm=%ld (motor_rpm=%ld)\n",
            side_label(s),
            static_cast<long>(cps), static_cast<long>(cps),
            static_cast<long>(rpm), static_cast<long>(rpm * 32));
@@ -208,7 +262,7 @@ int cmd_current(int argc, char** argv)
     using hvmrf01::motor::Side;
 
     auto print_one = [](Side s) {
-        printf("[%s] %ld mA  (%ld mV)\n", side_label(s),
+        emit("[%s] %ld mA  (%ld mV)\n", side_label(s),
                static_cast<long>(hvmrf01::current_sense::current_ma(s)),
                static_cast<long>(hvmrf01::current_sense::voltage_mv(s)));
     };
@@ -223,7 +277,7 @@ int cmd_current(int argc, char** argv)
         const auto side    = parse_side(argc, argv, 3);
         for (int i = 0; i < samples; i++) {
             if (side == Side::Both) {
-                printf("L=%ld mA  R=%ld mA\n",
+                emit("L=%ld mA  R=%ld mA\n",
                        static_cast<long>(hvmrf01::current_sense::current_ma(Side::Left)),
                        static_cast<long>(hvmrf01::current_sense::current_ma(Side::Right)));
             } else {
@@ -252,24 +306,24 @@ int cmd_spin(int argc, char** argv)
     using hvmrf01::motor::Side;
 
     if (argc < 4) {
-        printf("usage: spin <L|R> <fwd|rev> <duty 0-100> [ms=1500]\n");
+        emit("usage: spin <L|R> <fwd|rev> <duty 0-100> [ms=1500]\n");
         return 1;
     }
     const auto side = parse_side(argc, argv, 1);
     if (side == Side::Both) {
-        printf("spin targets one motor — use L or R\n");
+        emit("spin targets one motor — use L or R\n");
         return 1;
     }
     const std::string_view dir{argv[2]};
     const bool forward = (dir == "fwd" || dir == "f" || dir == "forward");
     const bool reverse = (dir == "rev" || dir == "r" || dir == "reverse");
     if (!forward && !reverse) {
-        printf("direction must be fwd|rev\n");
+        emit("direction must be fwd|rev\n");
         return 1;
     }
     const int duty = std::atoi(argv[3]);
     if (duty < 0 || duty > 100) {
-        printf("duty out of range: 0-100\n");
+        emit("duty out of range: 0-100\n");
         return 1;
     }
     int ms = argc > 4 ? std::atoi(argv[4]) : 1500;
@@ -279,9 +333,9 @@ int cmd_spin(int argc, char** argv)
     constexpr int window_ms = 100;
     const int     steps     = ms / window_ms;
 
-    printf("spin %s %s duty=%d%% for %d ms\n",
+    emit("spin %s %s duty=%d%% for %d ms\n",
            side_label(side), forward ? "fwd" : "rev", duty, ms);
-    printf("t_ms,rpm,current_ma\n");
+    emit("t_ms,rpm,current_ma\n");
 
     hvmrf01::motor::debug::set_duty_pct(duty, side);
     if (forward) hvmrf01::motor::debug::set_forward(side);
@@ -297,14 +351,14 @@ int cmd_spin(int argc, char** argv)
         const auto cps   = delta * (1000 / window_ms);
         const auto rpm   = (cps * 60) / hvmrf01::encoder::COUNTS_PER_OUTPUT_REV;
         const auto t_ms  = pdTICKS_TO_MS(xTaskGetTickCount() - t0);
-        printf("%lu,%ld,%ld\n",
+        emit("%lu,%ld,%ld\n",
                static_cast<unsigned long>(t_ms),
                static_cast<long>(rpm),
                static_cast<long>(hvmrf01::current_sense::current_ma(side)));
     }
 
     hvmrf01::motor::debug::set_brake(side);
-    printf("spin done; %s braked.\n", side_label(side));
+    emit("spin done; %s braked.\n", side_label(side));
     return 0;
 }
 
@@ -319,12 +373,12 @@ int cmd_ramp(int argc, char** argv)
     using hvmrf01::motor::Side;
 
     if (argc < 2) {
-        printf("usage: ramp <L|R> [ramp_s=3] [hold_s=1] [hz=100] [fwd|rev]\n");
+        emit("usage: ramp <L|R> [ramp_s=3] [hold_s=1] [hz=100] [fwd|rev]\n");
         return 1;
     }
     const auto side = parse_side(argc, argv, 1);
     if (side == Side::Both) {
-        printf("ramp targets one motor — use L or R\n");
+        emit("ramp targets one motor — use L or R\n");
         return 1;
     }
     const int ramp_s = argc > 2 ? std::atoi(argv[2]) : 3;
@@ -337,13 +391,13 @@ int cmd_ramp(int argc, char** argv)
         if (d == "rev" || d == "r" || d == "reverse") {
             forward = false;
         } else if (!(d == "fwd" || d == "f" || d == "forward")) {
-            printf("direction must be fwd|rev\n");
+            emit("direction must be fwd|rev\n");
             return 1;
         }
     }
     if (ramp_s < 0 || hold_s < 0 || (ramp_s + hold_s) <= 0 ||
         (ramp_s + hold_s) > 30 || hz < 1 || hz > 500) {
-        printf("usage: ramp <L|R> [ramp_s=3 (0..30 total)] [hold_s=1] [hz=100 (1..500)] [fwd|rev]\n");
+        emit("usage: ramp <L|R> [ramp_s=3 (0..30 total)] [hold_s=1] [hz=100 (1..500)] [fwd|rev]\n");
         return 1;
     }
 
@@ -356,9 +410,9 @@ int cmd_ramp(int argc, char** argv)
     if (forward) hvmrf01::motor::debug::set_forward(side);
     else         hvmrf01::motor::debug::set_reverse(side);
 
-    printf("RAMP_BEGIN hz=%d ramp_s=%d hold_s=%d side=%s dir=%s\n",
+    emit("RAMP_BEGIN hz=%d ramp_s=%d hold_s=%d side=%s dir=%s\n",
            hz, ramp_s, hold_s, side_label(side), forward ? "fwd" : "rev");
-    printf("t_ms,duty,count,current_ma\n");
+    emit("t_ms,duty,count,current_ma\n");
 
     const auto t0   = xTaskGetTickCount();
     TickType_t wake = t0;
@@ -371,14 +425,14 @@ int cmd_ramp(int argc, char** argv)
 
         const auto count = hvmrf01::encoder::count(side);
         const auto cur   = hvmrf01::current_sense::current_ma(side);
-        printf("%ld,%d,%ld,%ld\n", t_ms, duty,
+        emit("%ld,%d,%ld,%ld\n", t_ms, duty,
                static_cast<long>(count), static_cast<long>(cur));
         emitted++;
         vTaskDelayUntil(&wake, period);
     }
 
     hvmrf01::motor::debug::set_brake(side);
-    printf("RAMP_END samples=%d\n", emitted);
+    emit("RAMP_END samples=%d\n", emitted);
     return 0;
 }
 
@@ -397,7 +451,7 @@ int cmd_trace(int argc, char** argv)
     const int hz         = (argc > 2) ? std::atoi(argv[2]) : default_hz;
 
     if (duration_s <= 0 || duration_s > max_duration_s || hz < 1 || hz > max_hz) {
-        printf("usage: trace [duration_s=3 (1..30)] [hz=100 (1..500)]\n");
+        emit("usage: trace [duration_s=3 (1..30)] [hz=100 (1..500)]\n");
         return 1;
     }
 
@@ -406,22 +460,22 @@ int cmd_trace(int argc, char** argv)
     const auto   t0_ticks      = xTaskGetTickCount();
     TickType_t   wake          = t0_ticks;
 
-    printf("TRACE_BEGIN hz=%d duration_s=%d\n", hz, duration_s);
-    printf("t_ms,L,R\n");
+    emit("TRACE_BEGIN hz=%d duration_s=%d\n", hz, duration_s);
+    emit("t_ms,L,R\n");
 
     int emitted = 0;
     for (int i = 0; i < total_samples; i++) {
         const auto l = hvmrf01::encoder::count(hvmrf01::motor::Side::Left);
         const auto r = hvmrf01::encoder::count(hvmrf01::motor::Side::Right);
         const auto t_ms = pdTICKS_TO_MS(xTaskGetTickCount() - t0_ticks);
-        printf("%lu,%ld,%ld\n",
+        emit("%lu,%ld,%ld\n",
                static_cast<unsigned long>(t_ms),
                static_cast<long>(l), static_cast<long>(r));
         emitted++;
         vTaskDelayUntil(&wake, period_ticks);
     }
 
-    printf("TRACE_END samples=%d\n", emitted);
+    emit("TRACE_END samples=%d\n", emitted);
     return 0;
 }
 
@@ -432,16 +486,16 @@ int cmd_motion(int argc, char** argv)
 {
     if (argc >= 2 && std::string_view{argv[1]} == "stop") {
         hvmrf01::motion::stop();
-        printf("motion: stopped\n");
+        emit("motion: stopped\n");
         return 0;
     }
     if (argc < 3) {
-        printf("usage: motion <rpm> raise|lower | motion stop\n");
+        emit("usage: motion <rpm> raise|lower | motion stop\n");
         return 1;
     }
     const int rpm = std::atoi(argv[1]);
     if (rpm <= 0 || rpm > 300) {
-        printf("rpm out of range (1..300)\n");
+        emit("rpm out of range (1..300)\n");
         return 1;
     }
     const std::string_view dir{argv[2]};
@@ -451,11 +505,11 @@ int cmd_motion(int argc, char** argv)
     } else if (dir == "lower" || dir == "down" || dir == "close") {
         d = hvmrf01::motion::Direction::Lower;
     } else {
-        printf("direction must be raise|lower\n");
+        emit("direction must be raise|lower\n");
         return 1;
     }
     hvmrf01::motion::set_target(rpm, d);
-    printf("motion: target = %d RPM %s\n", rpm,
+    emit("motion: target = %d RPM %s\n", rpm,
            d == hvmrf01::motion::Direction::Raise ? "raise" : "lower");
     return 0;
 }
@@ -470,31 +524,141 @@ int cmd_sweep(int argc, char** argv)
     const int dwell_ms = (argc > 4) ? std::atoi(argv[4]) : 1500;
 
     if (step_hz <= 0 || end_hz <= start_hz) {
-        printf("usage: sweep [start_hz=5000] [end_hz=50000] [step_hz=1000] [dwell_ms=1500]\n");
+        emit("usage: sweep [start_hz=5000] [end_hz=50000] [step_hz=1000] [dwell_ms=1500]\n");
         return 1;
     }
 
-    printf("sweep %d → %d Hz, step %d, dwell %d ms. Driving forward.\n",
+    emit("sweep %d → %d Hz, step %d, dwell %d ms. Driving forward.\n",
            start_hz, end_hz, step_hz, dwell_ms);
     hvmrf01::motor::debug::set_forward();
 
     for (int hz = start_hz; hz <= end_hz; hz += step_hz) {
         if (!hvmrf01::motor::debug::set_freq_hz(hz)) {
-            printf("  %d Hz rejected, stopping sweep\n", hz);
+            emit("  %d Hz rejected, stopping sweep\n", hz);
             break;
         }
-        printf("  %d Hz\n", hz);
+        emit("  %d Hz\n", hz);
         vTaskDelay(pdMS_TO_TICKS(dwell_ms));
     }
 
     hvmrf01::motor::debug::set_brake();
-    printf("sweep done; braked.\n");
+    emit("sweep done; braked.\n");
     return 0;
 }
 
-void register_commands()
+// Working copy of the configuration that `config set` mutates and `config
+// save` persists. Seeded from the live config on first use.
+config::Config& work_config()
 {
-    const esp_console_cmd_t cmds[] = {
+    static config::Config w = config::get();
+    return w;
+}
+
+void print_config(const config::Config& c)
+{
+    emit("motion.duty_per_rpm = %.3f\n", c.motion.duty_per_rpm);
+    emit("motion.kp           = %.3f\n", c.motion.kp);
+    emit("motion.ki           = %.3f\n", c.motion.ki);
+    emit("motion.i_max        = %.1f\n", c.motion.i_max);
+    emit("motion.k_sync       = %.3f\n", c.motion.k_sync);
+    emit("motion.cover_rpm    = %d\n", c.motion.cover_rpm);
+    emit("motion.sync_fault   = %d\n", c.motion.sync_fault_limit);
+    emit("motion.stall_delta  = %d\n", c.motion.stall_delta_max);
+    emit("motion.stall_ms     = %d\n", c.motion.stall_fault_ms);
+    emit("motion.grace_ms     = %d\n", c.motion.startup_grace_ms);
+    emit("net.ssid            = %s\n", c.network.ssid);
+    emit("net.pass            = %s\n", c.network.pass[0] ? "(set)" : "(unset)");
+    emit("net.conn_to         = %d\n", c.network.connect_timeout_s);
+}
+
+// Apply one "key value" assignment to the working config. Returns false if the
+// key is unknown.
+bool set_config_field(std::string_view key, const char* value)
+{
+    auto& c = work_config();
+
+    if (key == "motion.duty_per_rpm") c.motion.duty_per_rpm = std::atof(value);
+    else if (key == "motion.kp")          c.motion.kp = std::atof(value);
+    else if (key == "motion.ki")          c.motion.ki = std::atof(value);
+    else if (key == "motion.i_max")       c.motion.i_max = std::atof(value);
+    else if (key == "motion.k_sync")      c.motion.k_sync = std::atof(value);
+    else if (key == "motion.cover_rpm")   c.motion.cover_rpm = std::atoi(value);
+    else if (key == "motion.sync_fault")  c.motion.sync_fault_limit = std::atoi(value);
+    else if (key == "motion.stall_delta") c.motion.stall_delta_max = std::atoi(value);
+    else if (key == "motion.stall_ms")    c.motion.stall_fault_ms = std::atoi(value);
+    else if (key == "motion.grace_ms")    c.motion.startup_grace_ms = std::atoi(value);
+    else if (key == "net.ssid")    std::snprintf(c.network.ssid, sizeof(c.network.ssid), "%s", value);
+    else if (key == "net.pass")    std::snprintf(c.network.pass, sizeof(c.network.pass), "%s", value);
+    else if (key == "net.conn_to") c.network.connect_timeout_s = std::atoi(value);
+    else return false;
+
+    return true;
+}
+
+// View, set, and persist configuration.
+//   config                  → dump the working config
+//   config set <key> <val>  → update one field in the working copy
+//   config save             → persist the working copy to NVS (and publish it)
+//   config reset            → discard edits, reload the live config
+int cmd_config(int argc, char** argv)
+{
+    if (argc == 1) {
+        print_config(work_config());
+        return 0;
+    }
+
+    const std::string_view sub{argv[1]};
+
+    if (sub == "save") {
+        if (auto r = config::save(work_config()); !r) {
+            emit("save failed (err %d)\n", static_cast<int>(r.error()));
+            return 1;
+        }
+        emit("config saved\n");
+        return 0;
+    }
+
+    if (sub == "reset") {
+        work_config() = config::get();
+        emit("working config reloaded from live values\n");
+        return 0;
+    }
+
+    if (sub == "set") {
+        if (argc < 4) {
+            emit("usage: config set <key> <value>\n");
+            return 1;
+        }
+        if (!set_config_field(argv[2], argv[3])) {
+            emit("unknown key: %s\n", argv[2]);
+            return 1;
+        }
+        emit("set %s = %s (unsaved; run `config save`)\n", argv[2], argv[3]);
+        return 0;
+    }
+
+    emit("usage: config | config set <key> <value> | config save | config reset\n");
+    return 1;
+}
+
+// Reboot into WiFi debug mode by setting the one-shot boot flag.
+int cmd_debug(int, char**)
+{
+    if (auto r = config::request_debug_boot(); !r) {
+        emit("failed to arm debug boot (err %d)\n", static_cast<int>(r.error()));
+        return 1;
+    }
+    emit("debug boot armed; rebooting into WiFi debug mode...\n");
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+    return 0;  // unreached
+}
+
+// Forward-declared so it can appear in the command table it prints.
+int cmd_help(int argc, char** argv);
+
+// The full command table, shared by register_commands() and cmd_help().
+const esp_console_cmd_t COMMANDS[] = {
         {.command = "fwd",    .help = "Raw forward at current duty (fights motion task)", .hint = "[L|R]", .func = &cmd_fwd,    .argtable = nullptr},
         {.command = "rev",    .help = "Raw reverse at current duty (fights motion task)", .hint = "[L|R]", .func = &cmd_rev,    .argtable = nullptr},
         {.command = "brake",  .help = "Active brake (EN=0; fights motion task)",          .hint = "[L|R]", .func = &cmd_brake,  .argtable = nullptr},
@@ -511,8 +675,28 @@ void register_commands()
         {.command = "ramp",   .help = "Ramp 0→100% duty; stream count+current (CSV)",     .hint = "<L|R> [ramp_s] [hold_s] [hz] [fwd|rev]", .func = &cmd_ramp, .argtable = nullptr},
         {.command = "trace",  .help = "Stream encoder counts (CSV) for capture+plot",     .hint = "[duration_s=3] [hz=100]", .func = &cmd_trace, .argtable = nullptr},
         {.command = "motion", .help = "Closed-loop speed control",                        .hint = "<rpm> raise|lower | stop", .func = &cmd_motion, .argtable = nullptr},
-    };
-    for (const auto& cmd : cmds) {
+        {.command = "config", .help = "View/set/save persisted config",                   .hint = "[set <key> <val> | save | reset]", .func = &cmd_config, .argtable = nullptr},
+        {.command = "debug",  .help = "Reboot into WiFi debug mode",                       .hint = nullptr, .func = &cmd_debug,  .argtable = nullptr},
+        {.command = "help",   .help = "List available commands",                           .hint = nullptr, .func = &cmd_help,   .argtable = nullptr},
+};
+
+// Replaces ESP-IDF's built-in help, whose output goes straight to stdout and
+// so isn't captured by emit() for the websocket console. Walks our own table.
+int cmd_help(int, char**)
+{
+    for (const auto& c : COMMANDS) {
+        if (c.hint != nullptr && c.hint[0] != '\0') {
+            emit("%-7s %s\n            %s\n", c.command, c.hint, c.help);
+        } else {
+            emit("%-7s %s\n", c.command, c.help);
+        }
+    }
+    return 0;
+}
+
+void register_commands()
+{
+    for (const auto& cmd : COMMANDS) {
         ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
     }
 }
@@ -531,11 +715,39 @@ void start()
         ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
 
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
-    ESP_ERROR_CHECK(esp_console_register_help_command());
     register_commands();
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
 
     ESP_LOGI(TAG, "REPL ready on USB-Serial-JTAG");
+}
+
+void init_for_remote()
+{
+    esp_console_config_t console_config = ESP_CONSOLE_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_init(&console_config));
+    register_commands();
+    ESP_LOGI(TAG, "console ready for remote dispatch");
+}
+
+std::string run_line(const std::string& line)
+{
+    std::lock_guard<std::mutex> lock(capture_mutex);
+
+    std::string out;
+    capture_buf = &out;
+    int       ret = 0;
+    const esp_err_t err = esp_console_run(line.c_str(), &ret);
+    capture_buf = nullptr;
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        out += "unknown command (try `help`)\n";
+    } else if (err == ESP_ERR_INVALID_ARG) {
+        // Empty line — nothing to do, return empty output.
+    } else if (err != ESP_OK) {
+        out += "command failed to run\n";
+    }
+
+    return out;
 }
 
 }  // namespace hvmrf01::console
