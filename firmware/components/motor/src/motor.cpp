@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
+#include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/zigbee.hpp"
 
@@ -123,21 +124,21 @@ void each(Side s, Fn&& fn)
 // ── Cover command handlers (called by zigbee task) ────────────────────────
 //
 // Route to the motion controller — it owns motor state from here on out.
-// Speed picked from DESIGN.md "Target operating speed" (60 RPM); we land
-// somewhere in the 40-60 range until cord-loaded sweeps refine it.
-constexpr int COVER_RPM = 40;
-
+// Open/close speed comes from config (config::Motion::cover_rpm), re-fittable
+// at runtime; the motion task reads the same value for its loop.
 zigbee::CommandStatus handle_open()
 {
-    ESP_LOGI(TAG, "open → motion raise @ %d RPM", COVER_RPM);
-    motion::set_target(COVER_RPM, motion::Direction::Raise);
+    const int rpm = config::get().motion.cover_rpm;
+    ESP_LOGI(TAG, "open → motion raise @ %d RPM", rpm);
+    motion::set_target(rpm, motion::Direction::Raise);
     return zigbee::CommandStatus::Success;
 }
 
 zigbee::CommandStatus handle_close()
 {
-    ESP_LOGI(TAG, "close → motion lower @ %d RPM", COVER_RPM);
-    motion::set_target(COVER_RPM, motion::Direction::Lower);
+    const int rpm = config::get().motion.cover_rpm;
+    ESP_LOGI(TAG, "close → motion lower @ %d RPM", rpm);
+    motion::set_target(rpm, motion::Direction::Lower);
     return zigbee::CommandStatus::Success;
 }
 

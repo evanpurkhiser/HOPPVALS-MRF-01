@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/encoder.hpp"
 #include "hv-mrf-01/motor.hpp"
 
@@ -19,38 +20,14 @@ namespace {
 
 constexpr auto* TAG = "hv-mrf-01.motion";
 
-// ── Tuning constants (DESIGN.md "Closed-loop speed control") ──────────────
-// Feedforward slope. Empirical iteration:
-//   2.8 RPM/% duty no-load → DUTY_PER_RPM = 0.36
-//   2.0 RPM/% duty light load → 0.50
-//   1.0 RPM/% duty sheath + cord load → 1.0   ← current
-// At 40 RPM target this starts FF at 40% duty, plus Kp/Ki for tracking.
-// Re-fit once mechanicals are finalized via the CLI: drive a known RPM,
-// note the steady-state duty in `state`, divide.
-constexpr float DUTY_PER_RPM     = 1.0f;
-constexpr float Kp               = 0.10f;   // % duty per RPM error
-constexpr float Ki               = 0.50f;   // % duty per RPM-sec
-// Anti-windup clamp on i_accum. Sized so the integrator can deliver up to
-// ~50% duty on top of the feedforward — gives the controller headroom to
-// overcome friction without ever pegging at the ceiling.
-constexpr float I_MAX            = 100.0f;
-constexpr float K_SYNC           = 0.05f;   // RPM bias per count of cross-error
-constexpr int   SYNC_FAULT_LIMIT = 200;     // counts (~5 mm of cord)
-
-// Stall detection: when both motors stop moving while we're commanding
-// non-zero motion, we've hit a hard stop (top endpoint, jam, etc.). Fault
-// out so we don't burn the motor against a wall. Skipped during a startup
-// grace window so motor stiction + PI ramp-up don't false-fire it.
-constexpr int   STALL_DELTA_MAX     = 1;    // |Δcount| per motor per tick at "stopped"
-constexpr int   STALL_FAULT_MS      = 100;  // consecutive duration of stoppage
-// Long enough to cover both motor stiction *and* integrator wind-up under
-// real load. With Ki=0.5 and full error, integrator climbs ~20/sec — to
-// add ~40% duty over feedforward takes ~2s. 1500ms is the floor; bump
-// further if stalls fire spuriously on heavy-load starts.
-constexpr int   STARTUP_GRACE_MS    = 1500;
-constexpr int   CONTROL_HZ          = 100;
-constexpr TickType_t TICK        = pdMS_TO_TICKS(1000 / CONTROL_HZ);
-constexpr float DT_S             = 1.0f / static_cast<float>(CONTROL_HZ);
+// Tuning constants (gains, watchdog thresholds, cover speed) live in
+// config::Motion and are read per tick from a snapshot — see control_task.
+// Only the structural loop rate is fixed at compile time: it sets the task
+// period and the DT used by the integrator, so it can't change at runtime.
+constexpr int   CONTROL_HZ = 100;
+constexpr TickType_t TICK  = pdMS_TO_TICKS(1000 / CONTROL_HZ);
+constexpr float DT_S       = 1.0f / static_cast<float>(CONTROL_HZ);
+constexpr int   MS_PER_TICK = 1000 / CONTROL_HZ;
 
 // FreeRTOS task config.
 constexpr UBaseType_t TASK_PRIO   = 6;
@@ -70,8 +47,6 @@ int stall_ticks = 0;
 // Ticks elapsed since motion became active (since last idle→active edge).
 // Stall watchdog ignores readings until this exceeds the grace window.
 int active_ticks = 0;
-constexpr int STALL_FAULT_TICKS   = STALL_FAULT_MS    / (1000 / CONTROL_HZ);
-constexpr int STARTUP_GRACE_TICKS = STARTUP_GRACE_MS  / (1000 / CONTROL_HZ);
 
 // ── Per-motor controller state (owned by the control task) ───────────────
 struct ControllerState
@@ -127,7 +102,7 @@ void reset_integrators()
 // "expected sign of count motion" into the loop so the same code handles
 // both directions. The PI controller operates on magnitudes (always
 // non-negative); the H-bridge handles direction via to_raw().
-void run_tick(Direction dir, int base_setpoint_rpm)
+void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
 {
     // Read both encoders up front so cross-coupling sees consistent values.
     const std::int32_t count_l = encoder::count(motor::Side::Left);
@@ -156,10 +131,10 @@ void run_tick(Direction dir, int base_setpoint_rpm)
     // if a user is poking the motors via the raw debug API, divergence is
     // expected and not a fault.
     const int sync_err = std::abs(count_l - count_r);
-    if (sync_err > SYNC_FAULT_LIMIT) {
+    if (sync_err > m.sync_fault_limit) {
         ESP_LOGW(TAG, "sync fault: |%ld - %ld| = %d > %d; braking",
                  static_cast<long>(count_l), static_cast<long>(count_r),
-                 sync_err, SYNC_FAULT_LIMIT);
+                 sync_err, m.sync_fault_limit);
         fault.store(true);
         direction.store(Direction::Stop);
         brake_both();
@@ -176,11 +151,13 @@ void run_tick(Direction dir, int base_setpoint_rpm)
     // overwrites prev_count.
     const std::int32_t delta_l = count_l - controllers[0].prev_count;
     const std::int32_t delta_r = count_r - controllers[1].prev_count;
-    if (active_ticks > STARTUP_GRACE_TICKS) {
-        if (std::abs(delta_l) <= STALL_DELTA_MAX && std::abs(delta_r) <= STALL_DELTA_MAX) {
-            if (++stall_ticks >= STALL_FAULT_TICKS) {
+    const int startup_grace_ticks = m.startup_grace_ms / MS_PER_TICK;
+    const int stall_fault_ticks   = m.stall_fault_ms / MS_PER_TICK;
+    if (active_ticks > startup_grace_ticks) {
+        if (std::abs(delta_l) <= m.stall_delta_max && std::abs(delta_r) <= m.stall_delta_max) {
+            if (++stall_ticks >= stall_fault_ticks) {
                 ESP_LOGW(TAG, "stall fault: both motors stopped %d ms at target %d RPM",
-                         STALL_FAULT_MS, base_setpoint_rpm);
+                         m.stall_fault_ms, base_setpoint_rpm);
                 fault.store(true);
                 direction.store(Direction::Stop);
                 brake_both();
@@ -219,16 +196,16 @@ void run_tick(Direction dir, int base_setpoint_rpm)
         // commanded direction) gets a positive bump, leading motor gets
         // throttled. Projecting through dir_sign keeps the bias correct
         // when lowering (counts decreasing).
-        const float bias = K_SYNC * dir_sign *
+        const float bias = m.k_sync * dir_sign *
                            static_cast<float>(count_other - count_me);
 
         const float setpoint = static_cast<float>(base_setpoint_rpm) + bias;
         const float error    = setpoint - measured;
 
-        c.i_accum = std::clamp(c.i_accum + error * DT_S, -I_MAX, I_MAX);
+        c.i_accum = std::clamp(c.i_accum + error * DT_S, -m.i_max, m.i_max);
 
-        const float ff_duty = setpoint * DUTY_PER_RPM;
-        float duty          = ff_duty + Kp * error + Ki * c.i_accum;
+        const float ff_duty = setpoint * m.duty_per_rpm;
+        float duty          = ff_duty + m.kp * error + m.ki * c.i_accum;
         duty                = std::clamp(duty, 0.0f, 100.0f);
 
         motor::raw::drive(c.side, to_raw(dir), static_cast<int>(duty));
@@ -243,9 +220,21 @@ void control_task(void*)
     controllers[0].prev_count = encoder::count(motor::Side::Left);
     controllers[1].prev_count = encoder::count(motor::Side::Right);
 
+    // Snapshot the tuning config locally so the 100 Hz loop never reads the
+    // shared config concurrently with a writer. Re-snapshot only when the
+    // generation counter bumps (a save() published new values) — lets the
+    // CLI retune gains live without a reboot.
+    config::Motion tune = config::get().motion;
+    std::uint32_t  tune_gen = config::generation();
+
     TickType_t last_wake = xTaskGetTickCount();
     while (true) {
         vTaskDelayUntil(&last_wake, TICK);
+
+        if (const auto g = config::generation(); g != tune_gen) {
+            tune     = config::get().motion;
+            tune_gen = g;
+        }
 
         const auto dir = direction.load();
         const auto rpm = target_rpm.load();
@@ -257,7 +246,7 @@ void control_task(void*)
             continue;
         }
 
-        run_tick(dir, rpm);
+        run_tick(tune, dir, rpm);
     }
 }
 

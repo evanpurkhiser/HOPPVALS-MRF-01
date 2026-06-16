@@ -359,7 +359,8 @@ void task_main(void*)
 
 void start()
 {
-    ESP_ERROR_CHECK(nvs_flash_init());
+    // The default NVS partition is brought up by config::init() in app_main;
+    // here we only initialize the Zigbee stack's dedicated storage partition.
     ESP_ERROR_CHECK(nvs_flash_init_partition(STORAGE_PARTITION));
     xTaskCreate(task_main, "zb_main", 4096, nullptr, 5, nullptr);
 }
