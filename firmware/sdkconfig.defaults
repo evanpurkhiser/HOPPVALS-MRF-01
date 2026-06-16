@@ -17,6 +17,11 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 #
+# HTTP server: enable websocket support for the WiFi debug console (/ws).
+#
+CONFIG_HTTPD_WS_SUPPORT=y
+
+#
 # Zigbee
 #
 CONFIG_ZB_ENABLED=y

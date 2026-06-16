@@ -10,9 +10,11 @@
 #include "esp_event.h"
 #include "esp_log.h"
 
+#include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/console.hpp"
 #include "hv-mrf-01/current_sense.hpp"
 #include "hv-mrf-01/encoder.hpp"
+#include "hv-mrf-01/http_debug.hpp"
 #include "hv-mrf-01/led.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
@@ -49,11 +51,28 @@ extern "C" void app_main()
                                                ESP_EVENT_ANY_ID, &on_zigbee_event,
                                                nullptr));
     ESP_LOGI(TAG, "Starting hv-mrf-01 firmware");
+    // Bring up NVS and load persisted config before any consumer reads it.
+    if (auto r = hvmrf01::config::init(); !r) {
+        ESP_LOGW(TAG, "config init failed (err %d); running on defaults",
+                 static_cast<int>(r.error()));
+    }
+    // Hardware stack comes up in both modes so the CLI and benchmarks work
+    // whether we're talking Zigbee or the WiFi debug console.
     hvmrf01::motor::start();          // registers cover handlers, enables drivers
     hvmrf01::encoder::start();        // PCNT quadrature readers for both motors
     hvmrf01::current_sense::start();  // ADC1 IPROPI sampling task (100 Hz)
     hvmrf01::motion::start();         // 100 Hz closed-loop speed control task
     hvmrf01::led::start();
+
+    // One-shot debug flag (set over Zigbee/CLI) selects the radio personality
+    // for this boot. The flag is cleared on read, so any later reboot returns
+    // to normal Zigbee operation.
+    if (hvmrf01::config::take_debug_boot()) {
+        ESP_LOGW(TAG, "→ entering WiFi debug mode");
+        hvmrf01::http_debug::run();   // WiFi STA + websocket console (no Zigbee)
+        return;
+    }
+
     hvmrf01::console::start();        // serial REPL — needs motor + encoder up first
     hvmrf01::zigbee::start();
 }
