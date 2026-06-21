@@ -566,6 +566,9 @@ void print_config(const config::Config& c)
     emit("motion.stall_delta  = %d\n", c.motion.stall_delta_max);
     emit("motion.stall_ms     = %d\n", c.motion.stall_fault_ms);
     emit("motion.grace_ms     = %d\n", c.motion.startup_grace_ms);
+    emit("motion.home_duty    = %d\n", c.motion.home_duty_pct);
+    emit("motion.home_settle  = %d\n", c.motion.home_settle_ms);
+    emit("motion.home_to      = %d\n", c.motion.home_timeout_s);
     emit("net.ssid            = %s\n", c.network.ssid);
     emit("net.pass            = %s\n", c.network.pass[0] ? "(set)" : "(unset)");
     emit("net.conn_to         = %d\n", c.network.connect_timeout_s);
@@ -587,6 +590,9 @@ bool set_config_field(std::string_view key, const char* value)
     else if (key == "motion.stall_delta") c.motion.stall_delta_max = std::atoi(value);
     else if (key == "motion.stall_ms")    c.motion.stall_fault_ms = std::atoi(value);
     else if (key == "motion.grace_ms")    c.motion.startup_grace_ms = std::atoi(value);
+    else if (key == "motion.home_duty")   c.motion.home_duty_pct = std::atoi(value);
+    else if (key == "motion.home_settle") c.motion.home_settle_ms = std::atoi(value);
+    else if (key == "motion.home_to")     c.motion.home_timeout_s = std::atoi(value);
     else if (key == "net.ssid")    std::snprintf(c.network.ssid, sizeof(c.network.ssid), "%s", value);
     else if (key == "net.pass")    std::snprintf(c.network.pass, sizeof(c.network.pass), "%s", value);
     else if (key == "net.conn_to") c.network.connect_timeout_s = std::atoi(value);
@@ -682,6 +688,7 @@ const esp_console_cmd_t COMMANDS[] = {
         {.command = "motion", .help = "Closed-loop speed control",                        .hint = "<rpm> raise|lower | stop", .func = &cmd_motion, .argtable = nullptr},
         {.command = "config", .help = "View/set/save persisted config",                   .hint = "[set <key> <val> | save | reset]", .func = &cmd_config, .argtable = nullptr},
         {.command = "debug",  .help = "Reboot into WiFi debug mode",                       .hint = nullptr, .func = &cmd_debug,  .argtable = nullptr},
+        {.command = "home",   .help = "Home both motors up to the top hard stop",          .hint = nullptr, .func = &cmd_home,   .argtable = nullptr},
         {.command = "help",   .help = "List available commands",                           .hint = nullptr, .func = &cmd_help,   .argtable = nullptr},
 };
 
@@ -696,6 +703,21 @@ int cmd_help(int, char**)
             emit("%-7s %s\n", c.command, c.help);
         }
     }
+    return 0;
+}
+
+// Home both motors up against the top hard stop, zeroing the encoders. Blocks
+// for up to the configured timeout; reports which sides settled.
+int cmd_home(int, char**)
+{
+    emit("homing: driving up until both motors settle...\n");
+    const auto r = hvmrf01::motion::home();
+    emit("home: L=%s R=%s\n", r.left ? "ok" : "TIMEOUT", r.right ? "ok" : "TIMEOUT");
+    if (!r.left || !r.right) {
+        emit("warning: a motor never settled — check the mechanism\n");
+        return 1;
+    }
+    emit("homed; encoders zeroed at top\n");
     return 0;
 }
 

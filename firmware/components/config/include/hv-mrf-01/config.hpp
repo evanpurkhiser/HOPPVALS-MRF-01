@@ -83,6 +83,20 @@ struct Motion {
     // motion begins, covering motor stiction plus the PI integrator's ramp-up
     // before counts start accumulating. Prevents false stalls on heavy starts.
     int startup_grace_ms = 1500;
+
+    // Homing: open-loop duty each motor is driven upward at, against the top
+    // hard stop. High enough to break stiction and move immediately so the
+    // settle detection is crisp.
+    int home_duty_pct = 50;
+
+    // A motor is "homed" once its encoder has been stopped (per-tick |Δcount|
+    // <= stall_delta_max) continuously for this long, i.e. it's wedged against
+    // the top stop. Its encoder is then zeroed (top = 0).
+    int home_settle_ms = 250;
+
+    // Overall safety cap on a homing run: if a motor never settles within this
+    // (free-spinning, encoder fault), homing aborts and brakes.
+    int home_timeout_s = 30;
 };
 
 // WiFi station credentials for debug mode. The radio is shared with Zigbee,

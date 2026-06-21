@@ -35,6 +35,22 @@ void set_target(int rpm, Direction d);
 // clear any fault flag.
 void stop();
 
+// Per-motor outcome of a homing run.
+struct HomeResult
+{
+    bool left;   // true if the left motor settled at the top stop
+    bool right;  // true if the right motor settled
+};
+
+// Home both motors against the top hard stop. Drives each upward open-loop at
+// config home_duty_pct; a motor is done once its encoder has been stopped for
+// home_settle_ms, at which point that motor brakes and its encoder is zeroed
+// (top = 0). The sync/stall fault watchdogs are bypassed for the run (the
+// encoders intentionally diverge and the stall is the success condition). Any
+// latched fault is cleared on entry. Blocks until both settle or
+// home_timeout_s elapses; returns which sides settled. Both motors end braked.
+HomeResult home();
+
 // Start the 100 Hz control task. Call once from app_main, after motor and
 // encoder are up.
 void start();

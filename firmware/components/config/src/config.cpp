@@ -100,6 +100,9 @@ void load_motion(Config& cfg)
     load_i32(h, "stall_delta", cfg.motion.stall_delta_max);
     load_i32(h, "stall_ms", cfg.motion.stall_fault_ms);
     load_i32(h, "grace_ms", cfg.motion.startup_grace_ms);
+    load_i32(h, "home_duty", cfg.motion.home_duty_pct);
+    load_i32(h, "home_settle", cfg.motion.home_settle_ms);
+    load_i32(h, "home_to", cfg.motion.home_timeout_s);
 
     nvs_close(h);
 }
@@ -168,7 +171,10 @@ std::expected<void, Error> save_motion(const Motion& m)
         save_i32(h, "sync_fault", m.sync_fault_limit) |
         save_i32(h, "stall_delta", m.stall_delta_max) |
         save_i32(h, "stall_ms", m.stall_fault_ms) |
-        save_i32(h, "grace_ms", m.startup_grace_ms);
+        save_i32(h, "grace_ms", m.startup_grace_ms) |
+        save_i32(h, "home_duty", m.home_duty_pct) |
+        save_i32(h, "home_settle", m.home_settle_ms) |
+        save_i32(h, "home_to", m.home_timeout_s);
 
     if (writes != ESP_OK) {
         nvs_close(h);

@@ -40,6 +40,9 @@ constexpr std::uint32_t STACK_SZ  = 4096;
 std::atomic<int>       target_rpm{ 0 };
 std::atomic<Direction> direction{ Direction::Stop };
 std::atomic<bool>      fault{ false };
+// While set, home() owns the motors directly and the control task stands down
+// so the two never drive at once.
+std::atomic<bool>      homing{ false };
 
 // Consecutive ticks where both motors registered near-zero count delta
 // while we're commanding motion. Resets when motion is detected.
@@ -231,6 +234,11 @@ void control_task(void*)
     while (true) {
         vTaskDelayUntil(&last_wake, TICK);
 
+        // home() drives the motors directly while this is set; stand down.
+        if (homing.load()) {
+            continue;
+        }
+
         if (const auto g = config::generation(); g != tune_gen) {
             tune     = config::get().motion;
             tune_gen = g;
@@ -276,6 +284,83 @@ void stop()
     // immediately here so the motors don't keep coasting through that
     // (≤10 ms) window.
     motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+}
+
+HomeResult home()
+{
+    const auto tune = config::get().motion;
+    const int  duty          = std::clamp(tune.home_duty_pct, 0, 100);
+    const int  settle_ticks  = std::max(1, tune.home_settle_ms / MS_PER_TICK);
+    const int  timeout_ticks = std::max(1, tune.home_timeout_s * 1000 / MS_PER_TICK);
+    const int  stopped_max   = tune.stall_delta_max;
+
+    // Take the motors away from the control task and clear any latched fault so
+    // homing works even after a sync/stall fault.
+    homing.store(true);
+    target_rpm.store(0);
+    direction.store(Direction::Stop);
+    fault.store(false);
+
+    struct Mtr
+    {
+        motor::Side  side;
+        const char*  label;
+        bool         done;
+        int          stopped;   // consecutive stopped ticks
+        std::int32_t prev;
+    };
+    std::array<Mtr, 2> mtrs{
+        Mtr{ motor::Side::Left,  "L", false, 0, encoder::count(motor::Side::Left) },
+        Mtr{ motor::Side::Right, "R", false, 0, encoder::count(motor::Side::Right) },
+    };
+
+    ESP_LOGI(TAG, "homing: up at %d%% duty, settle %d ms, timeout %d s",
+             duty, tune.home_settle_ms, tune.home_timeout_s);
+
+    TickType_t wake = xTaskGetTickCount();
+    for (int t = 0; t < timeout_ticks; ++t) {
+        vTaskDelayUntil(&wake, TICK);
+
+        bool all_done = true;
+        for (auto& m : mtrs) {
+            if (m.done) {
+                continue;  // already braked at its top
+            }
+            all_done = false;
+
+            const std::int32_t now   = encoder::count(m.side);
+            const std::int32_t delta = now - m.prev;
+            m.prev = now;
+
+            if (std::abs(delta) <= stopped_max) {
+                if (++m.stopped >= settle_ticks) {
+                    motor::raw::drive(m.side, motor::raw::Direction::Brake, 0);
+                    encoder::reset(m.side);
+                    m.done = true;
+                    ESP_LOGI(TAG, "homing: %s settled at top", m.label);
+                    continue;
+                }
+            } else {
+                m.stopped = 0;
+            }
+
+            motor::raw::drive(m.side, to_raw(Direction::Raise), duty);
+        }
+
+        if (all_done) {
+            break;
+        }
+    }
+
+    // Brake both and hand the motors back to the (idle) control task.
+    motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+    reset_integrators();
+    homing.store(false);
+
+    const HomeResult result{ mtrs[0].done, mtrs[1].done };
+    ESP_LOGI(TAG, "homing done: L=%s R=%s",
+             result.left ? "ok" : "TIMEOUT", result.right ? "ok" : "TIMEOUT");
+    return result;
 }
 
 void start()
