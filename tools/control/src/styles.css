@@ -1,0 +1,280 @@
+:root {
+  --bg: #15171c;
+  --panel: #1e2128;
+  --border: #2c313c;
+  --text: #e6e8ec;
+  --muted: #8b93a1;
+  --accent: #4a9eff;
+  --dirty: #d8a200;
+  --stop: #e0483e;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+h2 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.conn-connected .status-dot {
+  background: #43c267;
+}
+.conn-connecting .status-dot {
+  background: var(--dirty);
+}
+.conn-error .status-dot {
+  background: var(--stop);
+}
+.status-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.motion {
+  grid-column: 1;
+}
+.config {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+.console {
+  grid-column: 1;
+}
+
+input,
+button {
+  font: inherit;
+  color: var(--text);
+}
+
+input {
+  background: #12141a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+button {
+  background: #2a2f3a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.rpm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rpm input {
+  width: 80px;
+}
+
+.move-buttons {
+  display: flex;
+  gap: 8px;
+}
+.move {
+  flex: 1;
+  padding: 18px;
+  font-size: 16px;
+  user-select: none;
+  touch-action: none;
+}
+.move.active {
+  border-color: var(--accent);
+  background: #1d3a5c;
+}
+.stop {
+  flex: 1;
+  padding: 18px;
+  font-size: 16px;
+  background: var(--stop);
+  border-color: var(--stop);
+  font-weight: 600;
+}
+.home {
+  flex: 1;
+  padding: 14px;
+  font-size: 15px;
+}
+.home:disabled {
+  opacity: 0.6;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 12px 0 0;
+}
+kbd {
+  background: #12141a;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.field .fkey {
+  font-size: 13px;
+  color: var(--muted);
+}
+.field input {
+  width: 120px;
+  text-align: right;
+}
+.field.dirty input {
+  border-color: var(--dirty);
+  color: var(--dirty);
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.log {
+  height: 240px;
+  overflow-y: auto;
+  background: #0e1015;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+}
+.log-line {
+  display: flex;
+  gap: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-ts {
+  color: #5a6373;
+  flex-shrink: 0;
+}
+.log-tag {
+  flex-shrink: 0;
+  width: 28px;
+  text-transform: uppercase;
+}
+.log-tx .log-tag {
+  color: var(--accent);
+}
+.log-rx .log-tag {
+  color: #43c267;
+}
+.log-err .log-tag {
+  color: var(--stop);
+}
+.log-info .log-tag {
+  color: var(--muted);
+}
+
+.raw {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.raw input {
+  flex: 1;
+}
+
+@media (max-width: 760px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+  .motion,
+  .config,
+  .console {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
