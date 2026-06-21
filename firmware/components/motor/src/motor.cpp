@@ -173,10 +173,12 @@ void configure_gpio()
     };
     ESP_ERROR_CHECK(gpio_config(&cfg));
 
-    // Wake the drivers and land in brake (EN=0) before LEDC starts driving —
-    // the spring-less blind needs the short-brake hold from the moment we
-    // boot. PH level doesn't matter while EN is 0.
-    set_sleep(true);
+    // Keep the drivers ASLEEP (coast) through pin setup. Waking them here would
+    // be dangerous: the EN pins aren't driven until configure_ledc() runs, so a
+    // floating-high EN with nSLEEP awake and PH=0 drives the motor full-tilt in
+    // one direction until LEDC clamps EN to 0. start() wakes the drivers into
+    // brake only after configure_ledc() has forced EN=0.
+    set_sleep(false);
     for (const auto& m : BOTH) gpio_set_level(m.ph, 0);
 }
 
@@ -211,8 +213,13 @@ void configure_ledc()
 
 void start()
 {
-    configure_gpio();
-    configure_ledc();
+    configure_gpio();   // pins set up, drivers asleep (coast), PH=0
+    configure_ledc();   // EN driven to 0
+
+    // Now that EN is solidly 0, wake the drivers — nSLEEP high + EN=0 is brake,
+    // the hold state the spring-less blind needs. Done in this order so the
+    // motors never see "awake + undefined EN" (which would drive them).
+    set_sleep(true);
 
     zigbee::register_cover_handlers({
         .open          = &handle_open,
