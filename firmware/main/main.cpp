@@ -34,11 +34,20 @@ constexpr auto *TAG = "hv-mrf-01.app";
 constexpr std::int64_t RECOVERY_TIMEOUT_US = 5LL * 60 * 1000 * 1000;  // 5 minutes
 esp_timer_handle_t recovery_timer = nullptr;
 
+// Arm the one-shot debug flag and reboot. Halt the control loop and sleep the
+// drivers first so the motors are never mid-drive across the reset.
+void reboot_into_debug(const char *why)
+{
+    ESP_LOGW(TAG, "%s; arming debug boot and rebooting", why);
+    static_cast<void>(hvmrf01::config::request_debug_boot());
+    hvmrf01::motion::stop();
+    hvmrf01::motor::disable();
+    esp_restart();
+}
+
 void enter_debug_recovery(void *)
 {
-    ESP_LOGW(TAG, "no Zigbee join within recovery window; rebooting into WiFi debug mode");
-    static_cast<void>(hvmrf01::config::request_debug_boot());
-    esp_restart();
+    reboot_into_debug("no Zigbee join within recovery window");
 }
 
 void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
@@ -63,9 +72,7 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
         ESP_LOGI(TAG, "→ identify effect 0x%02x", effect);
     } break;
     case Event::EnterDebug:
-        ESP_LOGW(TAG, "→ Debug Mode switch on; arming debug boot and rebooting");
-        static_cast<void>(hvmrf01::config::request_debug_boot());
-        esp_restart();
+        reboot_into_debug("Debug Mode switch on");
         break;
     }
 }

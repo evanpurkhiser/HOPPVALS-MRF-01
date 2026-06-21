@@ -649,13 +649,18 @@ int cmd_debug(int, char**)
         return 1;
     }
     emit("debug boot armed; rebooting into WiFi debug mode...\n");
+    // Stop the loop and sleep the drivers so the motors aren't mid-drive across
+    // the reset.
+    hvmrf01::motion::stop();
+    hvmrf01::motor::disable();
     vTaskDelay(pdMS_TO_TICKS(200));
     esp_restart();
     return 0;  // unreached
 }
 
-// Forward-declared so it can appear in the command table it prints.
+// Forward-declared so they can appear in the command table.
 int cmd_help(int argc, char** argv);
+int cmd_home(int argc, char** argv);
 
 // The full command table, shared by register_commands() and cmd_help().
 const esp_console_cmd_t COMMANDS[] = {
