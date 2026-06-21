@@ -264,6 +264,7 @@ export default function App() {
               return (
                 <label key={f.key} className={`field ${dirty ? "dirty" : ""}`}>
                   <span className="fkey">{f.label}</span>
+                  <span className="fdesc">{f.description}</span>
                   <input
                     type={f.kind === "number" ? "number" : "text"}
                     step="any"
