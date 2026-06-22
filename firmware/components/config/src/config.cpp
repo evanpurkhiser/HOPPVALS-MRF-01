@@ -93,6 +93,8 @@ void load_motion(Config& cfg)
     load_f32(h, "duty_per_rpm", cfg.motion.duty_per_rpm);
     load_f32(h, "ff_off_raise", cfg.motion.ff_offset_raise_pct);
     load_f32(h, "ff_off_lower", cfg.motion.ff_offset_lower_pct);
+    load_f32(h, "ff_trim_l", cfg.motion.ff_trim_l);
+    load_f32(h, "ff_trim_r", cfg.motion.ff_trim_r);
     load_f32(h, "kp", cfg.motion.kp);
     load_f32(h, "ki", cfg.motion.ki);
     load_f32(h, "i_max", cfg.motion.i_max);

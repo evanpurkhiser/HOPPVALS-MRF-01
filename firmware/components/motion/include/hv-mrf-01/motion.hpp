@@ -70,24 +70,26 @@ struct GoToResult
 
 // Move both motors to an absolute position `mm` below the homed top, using the
 // synced speed loop, slowing over the final revolution and braking on arrival.
-// Requires a prior successful home() (the zero reference) and a calibrated
-// config mm_per_rev. Negative mm is clamped to 0 (the top). Blocks until
-// arrival, fault, or the time cap; returns the outcome and final positions.
-GoToResult go_to_mm(float mm);
+// `rpm` is the cruise speed for the move; 0 uses config cover_rpm. Requires a
+// prior successful home() (the zero reference) and a calibrated config
+// mm_per_rev. Negative mm is clamped to 0 (the top). Blocks until arrival,
+// fault, or the time cap; returns the outcome and final positions.
+GoToResult go_to_mm(float mm, int rpm = 0);
 
 // Convenience over go_to_mm: position as a percentage of full travel, where
 // 100% = config hard_stop_mm. The resulting mm is still clamped to the soft
 // stop inside go_to_mm, so a 100% command on a blind with a soft stop set
-// stops at the soft stop.
-GoToResult go_to_pct(float pct);
+// stops at the soft stop. `rpm` is the cruise speed; 0 uses cover_rpm.
+GoToResult go_to_pct(float pct, int rpm = 0);
 
 // Non-blocking variants for callers that must not block (the Zigbee
 // GoToLiftPercentage handler runs in the stack callback — blocking it for a
 // multi-second move would stall the mainloop). Starts the move and returns
 // immediately; the control task drives to the target and brakes on arrival.
-// Returns false if the move can't start (not homed or mm_per_rev unset).
-bool begin_go_to_mm(float mm);
-bool begin_go_to_pct(float pct);
+// `rpm` is the cruise speed; 0 uses cover_rpm. Returns false if the move can't
+// start (not homed or mm_per_rev unset).
+bool begin_go_to_mm(float mm, int rpm = 0);
+bool begin_go_to_pct(float pct, int rpm = 0);
 
 // Whether a valid home reference exists (set by a successful home(), cleared on
 // boot). go_to_mm requires it.

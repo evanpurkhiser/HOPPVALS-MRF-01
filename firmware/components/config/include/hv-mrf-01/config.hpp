@@ -49,6 +49,17 @@ struct Motion {
     float ff_offset_raise_pct = 10.0f;
     float ff_offset_lower_pct = 0.0f;
 
+    // Per-motor feedforward trim (multiplier on each side's feedforward duty).
+    // The two motors aren't identical — one runs a few % faster than the other
+    // at the same duty (measured ~4-9% in characterization). With the same
+    // feedforward for both, the PI + sync loop has to continuously make up that
+    // constant offset, which shows up as one motor hunting behind the other.
+    // Trim the faster motor's feedforward down (e.g. ff_trim_r ≈ 0.95) so both
+    // are commanded the right duty for the target speed and the loop only has
+    // to handle small disturbances. 1.0 = no trim.
+    float ff_trim_l = 1.0f;
+    float ff_trim_r = 1.0f;
+
     // Proportional gain: percent duty added per RPM of speed error. Provides
     // the immediate response; raise for snappier tracking, lower if it whines
     // or oscillates around the setpoint.

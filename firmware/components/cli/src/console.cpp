@@ -559,6 +559,8 @@ void print_config(const config::Config& c)
     emit("motion.duty_per_rpm = %.3f\n", c.motion.duty_per_rpm);
     emit("motion.ff_off_raise = %.2f\n", c.motion.ff_offset_raise_pct);
     emit("motion.ff_off_lower = %.2f\n", c.motion.ff_offset_lower_pct);
+    emit("motion.ff_trim_l    = %.3f\n", c.motion.ff_trim_l);
+    emit("motion.ff_trim_r    = %.3f\n", c.motion.ff_trim_r);
     emit("motion.kp           = %.3f\n", c.motion.kp);
     emit("motion.ki           = %.3f\n", c.motion.ki);
     emit("motion.i_max        = %.1f\n", c.motion.i_max);
@@ -591,6 +593,8 @@ bool set_config_field(std::string_view key, const char* value)
     if (key == "motion.duty_per_rpm") c.motion.duty_per_rpm = std::atof(value);
     else if (key == "motion.ff_off_raise") c.motion.ff_offset_raise_pct = std::atof(value);
     else if (key == "motion.ff_off_lower") c.motion.ff_offset_lower_pct = std::atof(value);
+    else if (key == "motion.ff_trim_l")    c.motion.ff_trim_l = std::atof(value);
+    else if (key == "motion.ff_trim_r")    c.motion.ff_trim_r = std::atof(value);
     else if (key == "motion.kp")          c.motion.kp = std::atof(value);
     else if (key == "motion.ki")          c.motion.ki = std::atof(value);
     else if (key == "motion.i_max")       c.motion.i_max = std::atof(value);
@@ -709,8 +713,8 @@ const esp_console_cmd_t COMMANDS[] = {
         {.command = "config", .help = "View/set/save persisted config",                   .hint = "[set <key> <val> | save | reset]", .func = &cmd_config, .argtable = nullptr},
         {.command = "debug",  .help = "Reboot into WiFi debug mode",                       .hint = nullptr, .func = &cmd_debug,  .argtable = nullptr},
         {.command = "home",   .help = "Home both motors up to the top hard stop",          .hint = nullptr, .func = &cmd_home,   .argtable = nullptr},
-        {.command = "goto",   .help = "Go to an absolute position (mm below the homed top)", .hint = "<mm>", .func = &cmd_goto, .argtable = nullptr},
-        {.command = "gotopct",.help = "Go to a position as % of full travel (clamped to soft stop)", .hint = "<0-100>", .func = &cmd_gotopct, .argtable = nullptr},
+        {.command = "goto",   .help = "Go to an absolute position (mm below the homed top)", .hint = "<mm> [rpm]", .func = &cmd_goto, .argtable = nullptr},
+        {.command = "gotopct",.help = "Go to a position as % of full travel (clamped to soft stop)", .hint = "<0-100> [rpm]", .func = &cmd_gotopct, .argtable = nullptr},
         {.command = "pos",    .help = "Print current position (mm below the homed top)",   .hint = nullptr, .func = &cmd_pos, .argtable = nullptr},
         {.command = "profile",.help = "Open-loop both-motor drive; stream pos+current CSV", .hint = "<up|down> <duty> <rotations> [hz] [max_s]", .func = &cmd_profile, .argtable = nullptr},
         {.command = "help",   .help = "List available commands",                           .hint = nullptr, .func = &cmd_help,   .argtable = nullptr},
@@ -760,24 +764,30 @@ int report_started(bool started)
 }
 
 // Move to an absolute position, mm below the homed top. Non-blocking.
+// Optional rpm sets the cruise speed (default: cover_rpm).
 int cmd_goto(int argc, char** argv)
 {
     if (argc < 2) {
-        emit("usage: goto <mm below top>\n");
+        emit("usage: goto <mm below top> [rpm]\n");
         return 1;
     }
-    return report_started(hvmrf01::motion::begin_go_to_mm(static_cast<float>(std::atof(argv[1]))));
+    const int rpm = (argc > 2) ? std::atoi(argv[2]) : 0;
+    return report_started(
+        hvmrf01::motion::begin_go_to_mm(static_cast<float>(std::atof(argv[1])), rpm));
 }
 
 // Move to a position as a percentage of full travel (100% = hard_stop_mm,
 // clamped to the soft stop). Non-blocking; same prerequisites as `goto`.
+// Optional rpm sets the cruise speed (default: cover_rpm).
 int cmd_gotopct(int argc, char** argv)
 {
     if (argc < 2) {
-        emit("usage: gotopct <0-100>\n");
+        emit("usage: gotopct <0-100> [rpm]\n");
         return 1;
     }
-    return report_started(hvmrf01::motion::begin_go_to_pct(static_cast<float>(std::atof(argv[1]))));
+    const int rpm = (argc > 2) ? std::atoi(argv[2]) : 0;
+    return report_started(
+        hvmrf01::motion::begin_go_to_pct(static_cast<float>(std::atof(argv[1])), rpm));
 }
 
 // Print the current position in mm below the homed top.

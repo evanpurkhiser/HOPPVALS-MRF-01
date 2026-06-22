@@ -53,6 +53,9 @@ std::atomic<bool>      homed{ false };
 std::atomic<bool>         position_mode{ false };
 std::atomic<bool>         arrived{ false };
 std::atomic<std::int32_t> target_counts{ 0 };
+// Cruise speed (RPM) for the active position move; resolved at begin time
+// (0 from the caller means "use cover_rpm").
+std::atomic<int>          move_rpm{ 0 };
 
 // Consecutive ticks where both motors registered near-zero count delta
 // while we're commanding motion. Resets when motion is detected.
@@ -261,10 +264,14 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
 
         c.i_accum = std::clamp(c.i_accum + error * DT_S, -m.i_max, m.i_max);
 
-        // Static breakaway offset (direction-dependent) plus the slope term.
+        // Static breakaway offset (direction-dependent) plus the slope term,
+        // scaled by this motor's trim so the two sides are commanded the right
+        // duty for the target speed despite their few-% hardware mismatch —
+        // otherwise the PI + sync loop hunts to make up the constant offset.
         const float ff_offset = (dir == Direction::Raise) ? m.ff_offset_raise_pct
                                                            : m.ff_offset_lower_pct;
-        const float ff_duty = ff_offset + setpoint * m.duty_per_rpm;
+        const float ff_trim = (c.side == motor::Side::Left) ? m.ff_trim_l : m.ff_trim_r;
+        const float ff_duty = (ff_offset + setpoint * m.duty_per_rpm) * ff_trim;
         float duty          = ff_duty + m.kp * error + m.ki * c.i_accum;
         duty                = std::clamp(duty, 0.0f, 100.0f);
 
@@ -306,13 +313,18 @@ void run_position_tick(const config::Motion& m)
     // Down (lower) increases counts; up (raise) decreases them.
     const Direction dir = (err > 0) ? Direction::Lower : Direction::Raise;
 
-    // Ease the speed setpoint down over the slow-down zone for a soft landing,
-    // flooring at goto_min_rpm so it keeps creeping rather than stalling short.
-    int setpoint = m.cover_rpm;
+    // Cruise at the move's chosen speed (set at begin time; fall back to
+    // cover_rpm). Ease the setpoint down over the slow-down zone for a soft
+    // landing, flooring at goto_min_rpm so it keeps creeping rather than
+    // stalling short.
+    int        cruise = move_rpm.load();
+    if (cruise <= 0) {
+        cruise = m.cover_rpm;
+    }
+    int setpoint = cruise;
     const std::int32_t mag = std::abs(err);
     if (mag < slow_counts) {
-        setpoint = std::max(m.goto_min_rpm,
-                            static_cast<int>(m.cover_rpm * mag / slow_counts));
+        setpoint = std::max(m.goto_min_rpm, static_cast<int>(cruise * mag / slow_counts));
     }
 
     run_tick(m, dir, setpoint);
@@ -471,12 +483,12 @@ HomeResult home()
     return result;
 }
 
-GoToResult go_to_pct(float pct)
+GoToResult go_to_pct(float pct, int rpm)
 {
     pct = std::clamp(pct, 0.0f, 100.0f);
     const float hard = config::get().motion.hard_stop_mm;
     // 100% maps to the hard stop; go_to_mm then clamps to the soft stop.
-    return go_to_mm(pct / 100.0f * hard);
+    return go_to_mm(pct / 100.0f * hard, rpm);
 }
 
 bool is_homed()
@@ -495,7 +507,7 @@ PositionMm position_mm()
                        mm(motor::Side::Left), mm(motor::Side::Right) };
 }
 
-bool begin_go_to_mm(float mm)
+bool begin_go_to_mm(float mm, int rpm)
 {
     const auto tune = config::get().motion;
     if (!homed.load() || tune.mm_per_rev <= 0.0f) {
@@ -505,25 +517,28 @@ bool begin_go_to_mm(float mm)
     mm = std::clamp(mm, 0.0f, down_limit_mm(tune));  // top .. soft/hard down limit
     const auto target = static_cast<std::int32_t>(
         mm * static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV) / tune.mm_per_rev);
+    const int cruise = (rpm > 0) ? std::clamp(rpm, 1, 300) : tune.cover_rpm;
 
     // Clean slate, then hand the seek to the control task.
     fault.store(false);
     reset_integrators();
     arrived.store(false);
     target_counts.store(target);
+    move_rpm.store(cruise);
     position_mode.store(true);
 
-    ESP_LOGI(TAG, "go_to %.1f mm (target %ld counts)", mm, static_cast<long>(target));
+    ESP_LOGI(TAG, "go_to %.1f mm (target %ld counts) @ %d RPM",
+             mm, static_cast<long>(target), cruise);
     return true;
 }
 
-bool begin_go_to_pct(float pct)
+bool begin_go_to_pct(float pct, int rpm)
 {
     pct = std::clamp(pct, 0.0f, 100.0f);
-    return begin_go_to_mm(pct / 100.0f * config::get().motion.hard_stop_mm);
+    return begin_go_to_mm(pct / 100.0f * config::get().motion.hard_stop_mm, rpm);
 }
 
-GoToResult go_to_mm(float mm)
+GoToResult go_to_mm(float mm, int rpm)
 {
     const auto tune = config::get().motion;
 
@@ -542,7 +557,7 @@ GoToResult go_to_mm(float mm)
         return result(GoToStatus::NotCalibrated);
     }
 
-    begin_go_to_mm(mm);  // validated above, so this starts the seek
+    begin_go_to_mm(mm, rpm);  // validated above, so this starts the seek
 
     // Generous cap: full travel at cover_rpm plus the slow-down tail.
     const int timeout_ticks = 30 * CONTROL_HZ;
