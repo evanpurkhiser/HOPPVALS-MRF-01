@@ -57,6 +57,36 @@ monitor:
 flash-monitor:
 	@$(IDF_RUN) idf.py $(PORT_ARG) flash monitor
 
+# ── Over-the-air firmware update (no USB) ───────────────────────────────────
+#
+# Flow:
+#   1. Put the device in WiFi debug mode: flip the "Debug Mode" switch in Home
+#      Assistant (ZHA), or run `debug` on the console (USB or websocket). It
+#      reboots, joins WiFi (creds from NVS), and logs its IP + ws://<ip>/ws.
+#      (WiFi creds are set once over USB: `config set net.ssid ...` / `net.pass`,
+#      then `config save`.)
+#   2. Build:  make build
+#   3. Push:   make ota IP=<device-ip>
+#      -> POSTs build/hv-mrf-01.bin to http://<ip>/ota.
+#
+# What the device does on a push (see components/http_debug):
+#   - De-energizes the motors for the whole write + reboot (they can't run).
+#   - Writes the *inactive* OTA slot (ota_0/ota_1), then reboots into it.
+#   - Re-arms debug mode by DEFAULT, so it comes back on WiFi ready for the next
+#     push. Pass NORMAL=1 (-> ?normal=1) to boot into normal Zigbee mode instead,
+#     e.g. when you're done iterating:  make ota IP=<ip> NORMAL=1
+#
+# Safety nets:
+#   - Bootloader rollback: an image that can't boot or get on WiFi auto-reverts
+#     to the previous slot (it's marked valid only once it proves healthy — the
+#     debug server coming up, or a Zigbee rejoin in normal mode).
+#   - Recovery fallback: a normal boot that never joins Zigbee within ~5 min
+#     reboots itself into WiFi debug mode, so a Zigbee-side fault can't strand a
+#     device with no USB access.
+#
+# Note: applying the ota_0/ota_1 partition layout itself required one USB flash;
+# after that, updates go over WiFi. A full `make flash` (not app-only) is needed
+# if the partition table ever changes again.
 ota:
 	@test -n "$(IP)" || { echo "usage: make ota IP=<device-ip> [NORMAL=1]"; exit 1; }
 	@echo "Pushing $(OTA_BIN) → $(OTA_URL)"
