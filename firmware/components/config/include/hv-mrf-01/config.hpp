@@ -125,6 +125,14 @@ struct Motion {
     // of at hard_stop_mm, even though the hard range is larger. 0 = unset (the
     // hard stop is the only down limit). Should be < hard_stop_mm when set.
     float soft_stop_mm = 0.0f;
+
+    // Go-to approach shaping (the soft landing). Over the final goto_slow_mm
+    // before the target, the speed ramps linearly from cover_rpm down toward
+    // goto_min_rpm (a floor so it keeps creeping rather than stalling short);
+    // it then brakes once within goto_tol_mm of the target.
+    float goto_slow_mm = 70.0f;  // slow-down zone width (~one drum revolution)
+    int   goto_min_rpm = 8;      // floor speed during the approach
+    float goto_tol_mm  = 2.0f;   // arrival tolerance — brake within this of target
 };
 
 // WiFi station credentials for debug mode. The radio is shared with Zigbee,

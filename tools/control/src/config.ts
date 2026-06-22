@@ -150,6 +150,27 @@ export const FIELDS: ConfigField[] = [
       "Optional down limit for a blind with an obstruction below — downward motion stops here instead of the hard stop. 0 = unset.",
   },
   {
+    key: "motion.goto_slow_mm",
+    label: "Go-to slow zone (mm)",
+    editable: true,
+    kind: "number",
+    description: "How far before the target a go-to starts ramping speed down for a soft landing.",
+  },
+  {
+    key: "motion.goto_min_rpm",
+    label: "Go-to floor speed (RPM)",
+    editable: true,
+    kind: "number",
+    description: "Minimum speed during the go-to approach, so it keeps creeping in rather than stalling short of target.",
+  },
+  {
+    key: "motion.goto_tol_mm",
+    label: "Go-to tolerance (mm)",
+    editable: true,
+    kind: "number",
+    description: "Arrival tolerance — the go-to brakes once within this distance of the target.",
+  },
+  {
     key: "net.ssid",
     label: "WiFi SSID",
     editable: false,

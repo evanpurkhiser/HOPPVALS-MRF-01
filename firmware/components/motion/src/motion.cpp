@@ -54,11 +54,6 @@ std::atomic<bool>         position_mode{ false };
 std::atomic<bool>         arrived{ false };
 std::atomic<std::int32_t> target_counts{ 0 };
 
-// Position-seek shaping.
-constexpr std::int32_t ARRIVE_TOL_COUNTS = 24;   // ~0.027 rev ≈ a few mm
-constexpr std::int32_t SLOW_ZONE_COUNTS  = 896;  // ramp speed down over the last rev
-constexpr int          POS_MIN_RPM       = 8;    // floor so it still creeps in
-
 // Consecutive ticks where both motors registered near-zero count delta
 // while we're commanding motion. Resets when motion is detected.
 int stall_ticks = 0;
@@ -282,13 +277,25 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
 // over the final revolution and braking once within tolerance. Reuses run_tick
 // for the actual PI + sync + stall/sync watchdogs, so a hit on the bottom stop
 // faults out exactly as a normal move would.
+std::int32_t mm_to_counts(const config::Motion& m, float mm, std::int32_t fallback)
+{
+    if (m.mm_per_rev <= 0.0f) {
+        return fallback;  // shouldn't happen — position mode requires calibration
+    }
+    return std::max<std::int32_t>(
+        1, static_cast<std::int32_t>(mm * encoder::COUNTS_PER_OUTPUT_REV / m.mm_per_rev));
+}
+
 void run_position_tick(const config::Motion& m)
 {
     const std::int32_t pos = (encoder::count(motor::Side::Left) +
                               encoder::count(motor::Side::Right)) / 2;
     const std::int32_t err = target_counts.load() - pos;  // >0 ⇒ need to go down
 
-    if (std::abs(err) <= ARRIVE_TOL_COUNTS) {
+    const std::int32_t tol_counts  = mm_to_counts(m, m.goto_tol_mm, 24);
+    const std::int32_t slow_counts = mm_to_counts(m, m.goto_slow_mm, 896);
+
+    if (std::abs(err) <= tol_counts) {
         motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
         reset_integrators();
         position_mode.store(false);
@@ -299,12 +306,13 @@ void run_position_tick(const config::Motion& m)
     // Down (lower) increases counts; up (raise) decreases them.
     const Direction dir = (err > 0) ? Direction::Lower : Direction::Raise;
 
-    // Ease the speed setpoint down over the last revolution for a soft landing.
+    // Ease the speed setpoint down over the slow-down zone for a soft landing,
+    // flooring at goto_min_rpm so it keeps creeping rather than stalling short.
     int setpoint = m.cover_rpm;
     const std::int32_t mag = std::abs(err);
-    if (mag < SLOW_ZONE_COUNTS) {
-        setpoint = std::max(POS_MIN_RPM,
-                            static_cast<int>(m.cover_rpm * mag / SLOW_ZONE_COUNTS));
+    if (mag < slow_counts) {
+        setpoint = std::max(m.goto_min_rpm,
+                            static_cast<int>(m.cover_rpm * mag / slow_counts));
     }
 
     run_tick(m, dir, setpoint);

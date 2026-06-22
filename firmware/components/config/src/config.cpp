@@ -108,6 +108,9 @@ void load_motion(Config& cfg)
     load_f32(h, "mm_per_rev", cfg.motion.mm_per_rev);
     load_f32(h, "hard_stop_mm", cfg.motion.hard_stop_mm);
     load_f32(h, "soft_stop_mm", cfg.motion.soft_stop_mm);
+    load_f32(h, "goto_slow_mm", cfg.motion.goto_slow_mm);
+    load_i32(h, "goto_min_rpm", cfg.motion.goto_min_rpm);
+    load_f32(h, "goto_tol_mm", cfg.motion.goto_tol_mm);
 
     nvs_close(h);
 }
@@ -184,7 +187,10 @@ std::expected<void, Error> save_motion(const Motion& m)
         save_i32(h, "home_to", m.home_timeout_s) |
         save_f32(h, "mm_per_rev", m.mm_per_rev) |
         save_f32(h, "hard_stop_mm", m.hard_stop_mm) |
-        save_f32(h, "soft_stop_mm", m.soft_stop_mm);
+        save_f32(h, "soft_stop_mm", m.soft_stop_mm) |
+        save_f32(h, "goto_slow_mm", m.goto_slow_mm) |
+        save_i32(h, "goto_min_rpm", m.goto_min_rpm) |
+        save_f32(h, "goto_tol_mm", m.goto_tol_mm);
 
     if (writes != ESP_OK) {
         nvs_close(h);

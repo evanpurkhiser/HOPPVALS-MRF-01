@@ -574,6 +574,9 @@ void print_config(const config::Config& c)
     emit("motion.mm_per_rev   = %.3f\n", c.motion.mm_per_rev);
     emit("motion.hard_stop_mm = %.1f\n", c.motion.hard_stop_mm);
     emit("motion.soft_stop_mm = %.1f\n", c.motion.soft_stop_mm);
+    emit("motion.goto_slow_mm = %.1f\n", c.motion.goto_slow_mm);
+    emit("motion.goto_min_rpm = %d\n", c.motion.goto_min_rpm);
+    emit("motion.goto_tol_mm  = %.1f\n", c.motion.goto_tol_mm);
     emit("net.ssid            = %s\n", c.network.ssid);
     emit("net.pass            = %s\n", c.network.pass[0] ? "(set)" : "(unset)");
     emit("net.conn_to         = %d\n", c.network.connect_timeout_s);
@@ -603,6 +606,9 @@ bool set_config_field(std::string_view key, const char* value)
     else if (key == "motion.mm_per_rev")  c.motion.mm_per_rev = std::atof(value);
     else if (key == "motion.hard_stop_mm") c.motion.hard_stop_mm = std::atof(value);
     else if (key == "motion.soft_stop_mm") c.motion.soft_stop_mm = std::atof(value);
+    else if (key == "motion.goto_slow_mm") c.motion.goto_slow_mm = std::atof(value);
+    else if (key == "motion.goto_min_rpm") c.motion.goto_min_rpm = std::atoi(value);
+    else if (key == "motion.goto_tol_mm")  c.motion.goto_tol_mm = std::atof(value);
     else if (key == "net.ssid")    std::snprintf(c.network.ssid, sizeof(c.network.ssid), "%s", value);
     else if (key == "net.pass")    std::snprintf(c.network.pass, sizeof(c.network.pass), "%s", value);
     else if (key == "net.conn_to") c.network.connect_timeout_s = std::atoi(value);
@@ -739,51 +745,39 @@ int cmd_home(int, char**)
     return 0;
 }
 
-// Report a go_to result; returns the command exit code.
-int report_goto(const hvmrf01::motion::GoToResult& r)
+// Common reply for the fire-and-forget position commands. The move runs in the
+// control task; this returns immediately so the console/websocket stays free to
+// process a `motion stop` mid-move (a blocking move would wedge the single
+// websocket handler and STOP couldn't get through).
+int report_started(bool started)
 {
-    using S = hvmrf01::motion::GoToStatus;
-    switch (r.status) {
-    case S::Arrived:
-        emit("arrived: L=%.1f mm R=%.1f mm\n", r.mm_l, r.mm_r);
-        return 0;
-    case S::NotHomed:
-        emit("not homed — run `home` first\n");
-        return 1;
-    case S::NotCalibrated:
-        emit("mm_per_rev not set — calibrate it (config set motion.mm_per_rev <mm>)\n");
-        return 1;
-    case S::Faulted:
-        emit("faulted mid-move (stall/sync) at L=%.1f R=%.1f mm; run `motion stop`\n",
-             r.mm_l, r.mm_r);
-        return 1;
-    case S::Timeout:
-        emit("timed out at L=%.1f R=%.1f mm\n", r.mm_l, r.mm_r);
+    if (!started) {
+        emit("rejected — run `home` first and set motion.mm_per_rev\n");
         return 1;
     }
-    return 1;
+    emit("move started (use `motion stop` to halt, `pos` to check progress)\n");
+    return 0;
 }
 
-// Move to an absolute position, given in mm below the homed top. Blocks until
-// the move finishes; needs a prior `home` and a calibrated mm_per_rev.
+// Move to an absolute position, mm below the homed top. Non-blocking.
 int cmd_goto(int argc, char** argv)
 {
     if (argc < 2) {
         emit("usage: goto <mm below top>\n");
         return 1;
     }
-    return report_goto(hvmrf01::motion::go_to_mm(static_cast<float>(std::atof(argv[1]))));
+    return report_started(hvmrf01::motion::begin_go_to_mm(static_cast<float>(std::atof(argv[1]))));
 }
 
 // Move to a position as a percentage of full travel (100% = hard_stop_mm,
-// clamped to the soft stop). Same prerequisites as `goto`.
+// clamped to the soft stop). Non-blocking; same prerequisites as `goto`.
 int cmd_gotopct(int argc, char** argv)
 {
     if (argc < 2) {
         emit("usage: gotopct <0-100>\n");
         return 1;
     }
-    return report_goto(hvmrf01::motion::go_to_pct(static_cast<float>(std::atof(argv[1]))));
+    return report_started(hvmrf01::motion::begin_go_to_pct(static_cast<float>(std::atof(argv[1]))));
 }
 
 // Print the current position in mm below the homed top.
