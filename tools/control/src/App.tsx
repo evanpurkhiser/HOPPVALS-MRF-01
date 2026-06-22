@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DeviceClient, type LogEntry, type Status } from "./device.ts";
-import { FIELDS, parseConfig, type ConfigValues } from "./config.ts";
+import {
+  SECTIONS,
+  parseConfig,
+  type ConfigField,
+  type ConfigValues,
+} from "./config.ts";
 
 const MOVE_KEYS_UP = new Set(["ArrowUp", "w", "W"]);
 const MOVE_KEYS_DOWN = new Set(["ArrowDown", "s", "S"]);
@@ -79,17 +84,19 @@ export default function App() {
       .finally(() => setHoming(false));
   }, [client, homing]);
 
-  // Go to a position as % of full travel. Blocks on the device until it
-  // arrives (or the move's time cap), so use a long timeout like home.
+  // Go to a position as % of full travel, at the RPM from the Motion panel.
+  // Fire-and-forget on the device (the move runs in the control task), so this
+  // returns promptly and Stop can interrupt it.
   const gotoPct = useCallback(() => {
     if (!client.isOpen() || seeking || homing) return;
     const p = Math.max(0, Math.min(100, Math.round(pct)));
+    const r = Math.max(1, Math.min(300, Math.round(rpm)));
     setSeeking(true);
     client
-      .send(`gotopct ${p}`, 40000)
+      .send(`gotopct ${p} ${r}`)
       .catch(() => {})
       .finally(() => setSeeking(false));
-  }, [client, pct, seeking, homing]);
+  }, [client, pct, rpm, seeking, homing]);
 
   // Keyboard hold-to-move. The pressed set guards against keydown auto-repeat.
   useEffect(() => {
@@ -290,26 +297,49 @@ export default function App() {
               Refresh
             </button>
           </h2>
-          <div className="fields">
-            {FIELDS.map((f) => {
-              const liveVal = live[f.key] ?? "";
-              const editVal = edits[f.key] ?? liveVal;
-              const dirty = f.editable && editVal !== liveVal;
-              return (
-                <label key={f.key} className={`field ${dirty ? "dirty" : ""}`}>
-                  <span className="fkey">{f.label}</span>
-                  <span className="fdesc">{f.description}</span>
-                  <input
-                    type={f.kind === "number" ? "number" : "text"}
-                    step="any"
-                    value={editVal}
-                    readOnly={!f.editable}
-                    disabled={!connected || !f.editable}
-                    onChange={(e) => setEdit(f.key, e.target.value)}
-                  />
-                </label>
-              );
-            })}
+          <div className="sections">
+            {SECTIONS.map((section) => (
+              <section key={section.title} className="cfg-section">
+                <h3>{section.title}</h3>
+                {section.description && (
+                  <p className="section-desc">{section.description}</p>
+                )}
+                {section.fields && (
+                  <div className="fields">
+                    {section.fields.map((f) => (
+                      <Field
+                        key={f.key}
+                        field={f}
+                        live={live}
+                        edits={edits}
+                        connected={connected}
+                        onEdit={setEdit}
+                      />
+                    ))}
+                  </div>
+                )}
+                {section.groups?.map((group) => (
+                  <div key={group.title} className="cfg-group">
+                    <h4>{group.title}</h4>
+                    {group.description && (
+                      <p className="group-desc">{group.description}</p>
+                    )}
+                    <div className="fields">
+                      {group.fields.map((f) => (
+                        <Field
+                          key={f.key}
+                          field={f}
+                          live={live}
+                          edits={edits}
+                          connected={connected}
+                          onEdit={setEdit}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </section>
+            ))}
           </div>
           <div className="config-actions">
             <button disabled={!connected || dirtyKeys.length === 0} onClick={save}>
@@ -347,5 +377,38 @@ export default function App() {
         </section>
       </main>
     </div>
+  );
+}
+
+function Field({
+  field,
+  live,
+  edits,
+  connected,
+  onEdit,
+}: {
+  field: ConfigField;
+  live: ConfigValues;
+  edits: ConfigValues;
+  connected: boolean;
+  onEdit: (key: string, value: string) => void;
+}) {
+  const liveVal = live[field.key] ?? "";
+  const editVal = edits[field.key] ?? liveVal;
+  const dirty = field.editable && editVal !== liveVal;
+
+  return (
+    <label className={`field ${dirty ? "dirty" : ""}`}>
+      <span className="fkey">{field.label}</span>
+      <span className="fdesc">{field.description}</span>
+      <input
+        type={field.kind === "number" ? "number" : "text"}
+        step="any"
+        value={editVal}
+        readOnly={!field.editable}
+        disabled={!connected || !field.editable}
+        onChange={(e) => onEdit(field.key, e.target.value)}
+      />
+    </label>
   );
 }

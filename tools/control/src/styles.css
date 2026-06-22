@@ -197,6 +197,45 @@ kbd {
   font-size: 11px;
 }
 
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.cfg-section h3 {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.cfg-section .section-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.cfg-group {
+  margin-top: 14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+.cfg-group h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin: 0 0 2px;
+}
+.cfg-group .group-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+
 .fields {
   display: flex;
   flex-direction: column;
