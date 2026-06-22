@@ -24,6 +24,21 @@ export const FIELDS: ConfigField[] = [
       "Feedforward slope: % PWM duty per RPM of target speed. Carries the bulk of the command so the integrator only trims.",
   },
   {
+    key: "motion.ff_off_raise",
+    label: "FF offset raise (%)",
+    editable: true,
+    kind: "number",
+    description:
+      "Static feedforward duty added when raising, to overcome breakaway friction + gravity (~10% measured). Lets the integrator start near the right duty.",
+  },
+  {
+    key: "motion.ff_off_lower",
+    label: "FF offset lower (%)",
+    editable: true,
+    kind: "number",
+    description: "Static feedforward duty added when lowering. ~0 since gravity already assists.",
+  },
+  {
     key: "motion.kp",
     label: "Kp (duty / RPM error)",
     editable: true,
@@ -110,6 +125,29 @@ export const FIELDS: ConfigField[] = [
     editable: true,
     kind: "number",
     description: "Safety cap on a homing run: aborts and brakes if a motor never settles.",
+  },
+  {
+    key: "motion.mm_per_rev",
+    label: "mm per revolution",
+    editable: true,
+    kind: "number",
+    description:
+      "Cord travel (mm) per output revolution — the spool calibration mapping counts to mm. Required for go-to-position. Measure: home, drive N revs, measure the drop, divide.",
+  },
+  {
+    key: "motion.hard_stop_mm",
+    label: "Hard stop (mm)",
+    editable: true,
+    kind: "number",
+    description: "Full downward travel from the top, in mm. 'Go to 100%' maps to this, and downward motion never passes it.",
+  },
+  {
+    key: "motion.soft_stop_mm",
+    label: "Soft stop (mm)",
+    editable: true,
+    kind: "number",
+    description:
+      "Optional down limit for a blind with an obstruction below — downward motion stops here instead of the hard stop. 0 = unset.",
   },
   {
     key: "net.ssid",

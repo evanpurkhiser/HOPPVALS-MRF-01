@@ -18,6 +18,8 @@ export default function App() {
   const [rpm, setRpm] = useState(40);
   const [moving, setMoving] = useState<"raise" | "lower" | null>(null);
   const [homing, setHoming] = useState(false);
+  const [pct, setPct] = useState(50);
+  const [seeking, setSeeking] = useState(false);
   const [raw, setRaw] = useState("");
 
   // Wire client callbacks once.
@@ -76,6 +78,18 @@ export default function App() {
       .catch(() => {})
       .finally(() => setHoming(false));
   }, [client, homing]);
+
+  // Go to a position as % of full travel. Blocks on the device until it
+  // arrives (or the move's time cap), so use a long timeout like home.
+  const gotoPct = useCallback(() => {
+    if (!client.isOpen() || seeking || homing) return;
+    const p = Math.max(0, Math.min(100, Math.round(pct)));
+    setSeeking(true);
+    client
+      .send(`gotopct ${p}`, 40000)
+      .catch(() => {})
+      .finally(() => setSeeking(false));
+  }, [client, pct, seeking, homing]);
 
   // Keyboard hold-to-move. The pressed set guards against keydown auto-repeat.
   useEffect(() => {
@@ -242,10 +256,30 @@ export default function App() {
               {homing ? "⌂ Homing…" : "⌂ Home"}
             </button>
           </div>
+          <div className="goto-row">
+            <label className="rpm">
+              Go to %
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={pct}
+                onChange={(e) => setPct(Number(e.target.value))}
+              />
+            </label>
+            <button
+              className="home"
+              disabled={!connected || seeking || homing}
+              onClick={gotoPct}
+            >
+              {seeking ? "Going…" : "Go"}
+            </button>
+          </div>
           <p className="hint">
             Hold <kbd>↑</kbd>/<kbd>W</kbd> to raise, <kbd>↓</kbd>/<kbd>S</kbd> to lower. Release
             to stop. Buttons work with mouse/touch too. <strong>Home</strong> drives both up to
-            the top stop and zeroes the encoders.
+            the top stop and zeroes the encoders. <strong>Go to %</strong> needs a prior home and
+            a calibrated mm/rev; 100% = hard stop (clamped to soft stop).
           </p>
         </section>
 

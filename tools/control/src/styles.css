@@ -171,6 +171,15 @@ button.small {
   padding: 14px;
   font-size: 15px;
 }
+.goto-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 8px;
+}
+.goto-row .rpm {
+  flex: 1;
+}
 .home:disabled {
   opacity: 0.6;
 }
