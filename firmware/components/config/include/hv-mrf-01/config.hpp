@@ -107,10 +107,13 @@ struct Motion {
     int home_timeout_s = 30;
 
     // Millimetres of cord travel per output-shaft revolution (effective spool
-    // circumference). The one calibration mapping encoder counts to physical
-    // distance for go-to-position. Measure: home, drive a known number of revs,
-    // measure the drop, divide. 0 = uncalibrated; go_to_mm refuses until set.
-    float mm_per_rev = 0.0f;
+    // circumference) — the mapping from encoder counts to physical distance for
+    // go-to-position. Computed from the mechanical design: the grooved,
+    // level-wound drum is 22 mm effective diameter, so π × 22 ≈ 69.1 mm/rev
+    // (the output shaft turns the drum 1:1, and the lift cord runs direct to the
+    // bottom rail). Same drum on every unit, so this is the default; refine
+    // per-device empirically if a build differs. 0 disables go-to.
+    float mm_per_rev = 69.115f;
 
     // Hard limit on downward travel from the homed top, in mm — the full range
     // of the blind. go_to_pct(100) maps to this, and downward motion never
