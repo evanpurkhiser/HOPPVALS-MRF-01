@@ -151,8 +151,27 @@ zigbee::CommandStatus handle_stop()
 
 zigbee::CommandStatus handle_go_to(std::uint8_t pct)
 {
-    ESP_LOGW(TAG, "go-to %u%% not implemented yet", pct);
-    return zigbee::CommandStatus::Failure;
+    // ZCL lift percentage: 0% = fully open (top), 100% = fully closed (bottom),
+    // which matches go_to_pct's 0 = top / 100 = hard stop. Non-blocking start —
+    // blocking the Zigbee callback for the whole move would stall the stack.
+    if (!motion::begin_go_to_pct(static_cast<float>(pct))) {
+        ESP_LOGW(TAG, "go-to %u%% rejected (not homed / mm_per_rev unset)", pct);
+        return zigbee::CommandStatus::Failure;
+    }
+
+    // Report where it will actually end: a soft stop caps downward travel, so a
+    // command past it ends at the soft-stop percentage, not the commanded one.
+    const auto&  m        = config::get().motion;
+    std::uint8_t reported = pct;
+    if (m.hard_stop_mm > 0.0f && m.soft_stop_mm > 0.0f && m.soft_stop_mm < m.hard_stop_mm) {
+        const auto cap = static_cast<std::uint8_t>(m.soft_stop_mm / m.hard_stop_mm * 100.0f);
+        if (reported > cap) {
+            reported = cap;
+        }
+    }
+    ESP_LOGI(TAG, "go-to %u%% -> move started (reporting %u%%)", pct, reported);
+    zigbee::report_position(reported);
+    return zigbee::CommandStatus::Success;
 }
 
 // ── Hardware init ─────────────────────────────────────────────────────────

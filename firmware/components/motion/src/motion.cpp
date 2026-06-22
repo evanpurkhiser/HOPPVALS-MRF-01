@@ -487,6 +487,34 @@ PositionMm position_mm()
                        mm(motor::Side::Left), mm(motor::Side::Right) };
 }
 
+bool begin_go_to_mm(float mm)
+{
+    const auto tune = config::get().motion;
+    if (!homed.load() || tune.mm_per_rev <= 0.0f) {
+        return false;
+    }
+
+    mm = std::clamp(mm, 0.0f, down_limit_mm(tune));  // top .. soft/hard down limit
+    const auto target = static_cast<std::int32_t>(
+        mm * static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV) / tune.mm_per_rev);
+
+    // Clean slate, then hand the seek to the control task.
+    fault.store(false);
+    reset_integrators();
+    arrived.store(false);
+    target_counts.store(target);
+    position_mode.store(true);
+
+    ESP_LOGI(TAG, "go_to %.1f mm (target %ld counts)", mm, static_cast<long>(target));
+    return true;
+}
+
+bool begin_go_to_pct(float pct)
+{
+    pct = std::clamp(pct, 0.0f, 100.0f);
+    return begin_go_to_mm(pct / 100.0f * config::get().motion.hard_stop_mm);
+}
+
 GoToResult go_to_mm(float mm)
 {
     const auto tune = config::get().motion;
@@ -505,25 +533,8 @@ GoToResult go_to_mm(float mm)
     if (tune.mm_per_rev <= 0.0f) {
         return result(GoToStatus::NotCalibrated);
     }
-    if (mm < 0.0f) {
-        mm = 0.0f;  // can't go above the top reference
-    }
-    const float limit = down_limit_mm(tune);
-    if (mm > limit) {
-        mm = limit;  // never past the soft/hard down limit
-    }
 
-    const auto target = static_cast<std::int32_t>(
-        mm * static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV) / tune.mm_per_rev);
-
-    // Clean slate, then hand the seek to the control task.
-    fault.store(false);
-    reset_integrators();
-    arrived.store(false);
-    target_counts.store(target);
-    position_mode.store(true);
-
-    ESP_LOGI(TAG, "go_to %.1f mm (target %ld counts)", mm, static_cast<long>(target));
+    begin_go_to_mm(mm);  // validated above, so this starts the seek
 
     // Generous cap: full travel at cover_rpm plus the slow-down tail.
     const int timeout_ticks = 30 * CONTROL_HZ;

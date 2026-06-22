@@ -81,6 +81,14 @@ GoToResult go_to_mm(float mm);
 // stops at the soft stop.
 GoToResult go_to_pct(float pct);
 
+// Non-blocking variants for callers that must not block (the Zigbee
+// GoToLiftPercentage handler runs in the stack callback — blocking it for a
+// multi-second move would stall the mainloop). Starts the move and returns
+// immediately; the control task drives to the target and brakes on arrival.
+// Returns false if the move can't start (not homed or mm_per_rev unset).
+bool begin_go_to_mm(float mm);
+bool begin_go_to_pct(float pct);
+
 // Whether a valid home reference exists (set by a successful home(), cleared on
 // boot). go_to_mm requires it.
 bool is_homed();
