@@ -557,6 +557,8 @@ config::Config& work_config()
 void print_config(const config::Config& c)
 {
     emit("motion.duty_per_rpm = %.3f\n", c.motion.duty_per_rpm);
+    emit("motion.ff_off_raise = %.2f\n", c.motion.ff_offset_raise_pct);
+    emit("motion.ff_off_lower = %.2f\n", c.motion.ff_offset_lower_pct);
     emit("motion.kp           = %.3f\n", c.motion.kp);
     emit("motion.ki           = %.3f\n", c.motion.ki);
     emit("motion.i_max        = %.1f\n", c.motion.i_max);
@@ -569,6 +571,9 @@ void print_config(const config::Config& c)
     emit("motion.home_duty    = %d\n", c.motion.home_duty_pct);
     emit("motion.home_settle  = %d\n", c.motion.home_settle_ms);
     emit("motion.home_to      = %d\n", c.motion.home_timeout_s);
+    emit("motion.mm_per_rev   = %.3f\n", c.motion.mm_per_rev);
+    emit("motion.hard_stop_mm = %.1f\n", c.motion.hard_stop_mm);
+    emit("motion.soft_stop_mm = %.1f\n", c.motion.soft_stop_mm);
     emit("net.ssid            = %s\n", c.network.ssid);
     emit("net.pass            = %s\n", c.network.pass[0] ? "(set)" : "(unset)");
     emit("net.conn_to         = %d\n", c.network.connect_timeout_s);
@@ -581,6 +586,8 @@ bool set_config_field(std::string_view key, const char* value)
     auto& c = work_config();
 
     if (key == "motion.duty_per_rpm") c.motion.duty_per_rpm = std::atof(value);
+    else if (key == "motion.ff_off_raise") c.motion.ff_offset_raise_pct = std::atof(value);
+    else if (key == "motion.ff_off_lower") c.motion.ff_offset_lower_pct = std::atof(value);
     else if (key == "motion.kp")          c.motion.kp = std::atof(value);
     else if (key == "motion.ki")          c.motion.ki = std::atof(value);
     else if (key == "motion.i_max")       c.motion.i_max = std::atof(value);
@@ -593,6 +600,9 @@ bool set_config_field(std::string_view key, const char* value)
     else if (key == "motion.home_duty")   c.motion.home_duty_pct = std::atoi(value);
     else if (key == "motion.home_settle") c.motion.home_settle_ms = std::atoi(value);
     else if (key == "motion.home_to")     c.motion.home_timeout_s = std::atoi(value);
+    else if (key == "motion.mm_per_rev")  c.motion.mm_per_rev = std::atof(value);
+    else if (key == "motion.hard_stop_mm") c.motion.hard_stop_mm = std::atof(value);
+    else if (key == "motion.soft_stop_mm") c.motion.soft_stop_mm = std::atof(value);
     else if (key == "net.ssid")    std::snprintf(c.network.ssid, sizeof(c.network.ssid), "%s", value);
     else if (key == "net.pass")    std::snprintf(c.network.pass, sizeof(c.network.pass), "%s", value);
     else if (key == "net.conn_to") c.network.connect_timeout_s = std::atoi(value);
@@ -667,6 +677,10 @@ int cmd_debug(int, char**)
 // Forward-declared so they can appear in the command table.
 int cmd_help(int argc, char** argv);
 int cmd_home(int argc, char** argv);
+int cmd_profile(int argc, char** argv);
+int cmd_goto(int argc, char** argv);
+int cmd_gotopct(int argc, char** argv);
+int cmd_pos(int argc, char** argv);
 
 // The full command table, shared by register_commands() and cmd_help().
 const esp_console_cmd_t COMMANDS[] = {
@@ -689,6 +703,10 @@ const esp_console_cmd_t COMMANDS[] = {
         {.command = "config", .help = "View/set/save persisted config",                   .hint = "[set <key> <val> | save | reset]", .func = &cmd_config, .argtable = nullptr},
         {.command = "debug",  .help = "Reboot into WiFi debug mode",                       .hint = nullptr, .func = &cmd_debug,  .argtable = nullptr},
         {.command = "home",   .help = "Home both motors up to the top hard stop",          .hint = nullptr, .func = &cmd_home,   .argtable = nullptr},
+        {.command = "goto",   .help = "Go to an absolute position (mm below the homed top)", .hint = "<mm>", .func = &cmd_goto, .argtable = nullptr},
+        {.command = "gotopct",.help = "Go to a position as % of full travel (clamped to soft stop)", .hint = "<0-100>", .func = &cmd_gotopct, .argtable = nullptr},
+        {.command = "pos",    .help = "Print current position (mm below the homed top)",   .hint = nullptr, .func = &cmd_pos, .argtable = nullptr},
+        {.command = "profile",.help = "Open-loop both-motor drive; stream pos+current CSV", .hint = "<up|down> <duty> <rotations> [hz] [max_s]", .func = &cmd_profile, .argtable = nullptr},
         {.command = "help",   .help = "List available commands",                           .hint = nullptr, .func = &cmd_help,   .argtable = nullptr},
 };
 
@@ -718,6 +736,156 @@ int cmd_home(int, char**)
         return 1;
     }
     emit("homed; encoders zeroed at top\n");
+    return 0;
+}
+
+// Report a go_to result; returns the command exit code.
+int report_goto(const hvmrf01::motion::GoToResult& r)
+{
+    using S = hvmrf01::motion::GoToStatus;
+    switch (r.status) {
+    case S::Arrived:
+        emit("arrived: L=%.1f mm R=%.1f mm\n", r.mm_l, r.mm_r);
+        return 0;
+    case S::NotHomed:
+        emit("not homed — run `home` first\n");
+        return 1;
+    case S::NotCalibrated:
+        emit("mm_per_rev not set — calibrate it (config set motion.mm_per_rev <mm>)\n");
+        return 1;
+    case S::Faulted:
+        emit("faulted mid-move (stall/sync) at L=%.1f R=%.1f mm; run `motion stop`\n",
+             r.mm_l, r.mm_r);
+        return 1;
+    case S::Timeout:
+        emit("timed out at L=%.1f R=%.1f mm\n", r.mm_l, r.mm_r);
+        return 1;
+    }
+    return 1;
+}
+
+// Move to an absolute position, given in mm below the homed top. Blocks until
+// the move finishes; needs a prior `home` and a calibrated mm_per_rev.
+int cmd_goto(int argc, char** argv)
+{
+    if (argc < 2) {
+        emit("usage: goto <mm below top>\n");
+        return 1;
+    }
+    return report_goto(hvmrf01::motion::go_to_mm(static_cast<float>(std::atof(argv[1]))));
+}
+
+// Move to a position as a percentage of full travel (100% = hard_stop_mm,
+// clamped to the soft stop). Same prerequisites as `goto`.
+int cmd_gotopct(int argc, char** argv)
+{
+    if (argc < 2) {
+        emit("usage: gotopct <0-100>\n");
+        return 1;
+    }
+    return report_goto(hvmrf01::motion::go_to_pct(static_cast<float>(std::atof(argv[1]))));
+}
+
+// Print the current position in mm below the homed top.
+int cmd_pos(int, char**)
+{
+    const auto p = hvmrf01::motion::position_mm();
+    emit("L=%.1f mm R=%.1f mm%s\n", p.mm_l, p.mm_r,
+         p.valid ? "" : "  (not homed / mm_per_rev unset — value meaningless)");
+    return 0;
+}
+
+// Open-loop system characterization. Drives BOTH motors at a fixed duty in one
+// direction with no PI/sync/stall feedback, each braking once its own encoder
+// has turned `rotations` output revs (or the time cap hits). Streams a CSV
+// envelope of raw per-motor position + current so the host can derive velocity
+// and acceleration and see how the two sides track open-loop.
+//   profile <up|down> <duty 0-100> <rotations> [hz=50] [max_s=25]
+int cmd_profile(int argc, char** argv)
+{
+    using hvmrf01::motor::Side;
+    using hvmrf01::motor::raw::Direction;
+
+    if (argc < 4) {
+        emit("usage: profile <up|down> <duty 0-100> <rotations> [hz=50] [max_s=25]\n");
+        return 1;
+    }
+
+    const std::string_view dir{argv[1]};
+    const bool up   = (dir == "up" || dir == "raise");
+    const bool down = (dir == "down" || dir == "lower");
+    if (!up && !down) {
+        emit("direction must be up|down\n");
+        return 1;
+    }
+    // up = raise = raw Forward; down = lower = raw Reverse (matches motion).
+    const Direction raw_dir = up ? Direction::Forward : Direction::Reverse;
+
+    const int duty = std::atoi(argv[2]);
+    if (duty < 0 || duty > 100) {
+        emit("duty out of range: 0-100\n");
+        return 1;
+    }
+    const int rotations = std::atoi(argv[3]);
+    if (rotations <= 0 || rotations > 100) {
+        emit("rotations out of range: 1-100\n");
+        return 1;
+    }
+    int hz = argc > 4 ? std::atoi(argv[4]) : 50;
+    if (hz < 1 || hz > 200) hz = 50;
+    int max_s = argc > 5 ? std::atoi(argv[5]) : 25;
+    if (max_s < 1 || max_s > 60) max_s = 25;
+
+    const std::int32_t target = static_cast<std::int32_t>(rotations) *
+                                hvmrf01::encoder::COUNTS_PER_OUTPUT_REV;
+    const int        total_samples = max_s * hz;
+    const TickType_t period        = pdMS_TO_TICKS(1000 / hz);
+
+    // Take the motors from the (idle) controller and start from a clean zero.
+    hvmrf01::motion::stop();
+    hvmrf01::encoder::reset(Side::Both);
+
+    emit("PROFILE_BEGIN dir=%s duty=%d rotations=%d hz=%d max_s=%d cpr=%ld\n",
+         up ? "up" : "down", duty, rotations, hz, max_s,
+         static_cast<long>(hvmrf01::encoder::COUNTS_PER_OUTPUT_REV));
+    emit("t_ms,count_l,count_r,cur_l_ma,cur_r_ma\n");
+
+    bool done_l = false, done_r = false;
+    const auto t0  = xTaskGetTickCount();
+    TickType_t wake = t0;
+    int emitted = 0;
+
+    for (int i = 0; i < total_samples; i++) {
+        const std::int32_t cl = hvmrf01::encoder::count(Side::Left);
+        const std::int32_t cr = hvmrf01::encoder::count(Side::Right);
+
+        if (!done_l && std::abs(cl) >= target) {
+            hvmrf01::motor::raw::drive(Side::Left, Direction::Brake, 0);
+            done_l = true;
+        }
+        if (!done_r && std::abs(cr) >= target) {
+            hvmrf01::motor::raw::drive(Side::Right, Direction::Brake, 0);
+            done_r = true;
+        }
+        if (!done_l) hvmrf01::motor::raw::drive(Side::Left, raw_dir, duty);
+        if (!done_r) hvmrf01::motor::raw::drive(Side::Right, raw_dir, duty);
+
+        const auto t_ms = pdTICKS_TO_MS(xTaskGetTickCount() - t0);
+        emit("%lu,%ld,%ld,%ld,%ld\n",
+             static_cast<unsigned long>(t_ms),
+             static_cast<long>(cl), static_cast<long>(cr),
+             static_cast<long>(hvmrf01::current_sense::current_ma(Side::Left)),
+             static_cast<long>(hvmrf01::current_sense::current_ma(Side::Right)));
+        emitted++;
+
+        if (done_l && done_r) {
+            break;
+        }
+        vTaskDelayUntil(&wake, period);
+    }
+
+    hvmrf01::motor::debug::set_brake(Side::Both);
+    emit("PROFILE_END samples=%d done_l=%d done_r=%d\n", emitted, done_l, done_r);
     return 0;
 }
 

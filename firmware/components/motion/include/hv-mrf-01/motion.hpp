@@ -51,6 +51,51 @@ struct HomeResult
 // home_timeout_s elapses; returns which sides settled. Both motors end braked.
 HomeResult home();
 
+// Outcome of a go_to_mm() move.
+enum class GoToStatus : std::uint8_t
+{
+    Arrived,        // reached the target within tolerance
+    NotHomed,       // no valid zero reference — run home() first
+    NotCalibrated,  // config mm_per_rev is unset
+    Faulted,        // a stall/sync fault tripped mid-move (e.g. hit the bottom)
+    Timeout,        // didn't arrive within the time cap
+};
+
+struct GoToResult
+{
+    GoToStatus status;
+    float      mm_l;  // final left position, mm below the homed top
+    float      mm_r;  // final right position
+};
+
+// Move both motors to an absolute position `mm` below the homed top, using the
+// synced speed loop, slowing over the final revolution and braking on arrival.
+// Requires a prior successful home() (the zero reference) and a calibrated
+// config mm_per_rev. Negative mm is clamped to 0 (the top). Blocks until
+// arrival, fault, or the time cap; returns the outcome and final positions.
+GoToResult go_to_mm(float mm);
+
+// Convenience over go_to_mm: position as a percentage of full travel, where
+// 100% = config hard_stop_mm. The resulting mm is still clamped to the soft
+// stop inside go_to_mm, so a 100% command on a blind with a soft stop set
+// stops at the soft stop.
+GoToResult go_to_pct(float pct);
+
+// Whether a valid home reference exists (set by a successful home(), cleared on
+// boot). go_to_mm requires it.
+bool is_homed();
+
+// Current per-motor position, in mm below the homed top. valid is false when
+// there's no usable reference (not homed) or no mm calibration — the mm values
+// are then meaningless.
+struct PositionMm
+{
+    bool  valid;
+    float mm_l;
+    float mm_r;
+};
+PositionMm position_mm();
+
 // Start the 100 Hz control task. Call once from app_main, after motor and
 // encoder are up.
 void start();

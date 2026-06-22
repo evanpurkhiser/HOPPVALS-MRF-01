@@ -44,6 +44,21 @@ std::atomic<bool>      fault{ false };
 // so the two never drive at once.
 std::atomic<bool>      homing{ false };
 
+// A valid zero reference exists (set by a successful home()). go_to_mm needs it.
+std::atomic<bool>      homed{ false };
+
+// Position-seek state. While position_mode is set, the control task drives both
+// motors toward target_counts (counts below the homed top) via the synced loop
+// and sets arrived when within tolerance.
+std::atomic<bool>         position_mode{ false };
+std::atomic<bool>         arrived{ false };
+std::atomic<std::int32_t> target_counts{ 0 };
+
+// Position-seek shaping.
+constexpr std::int32_t ARRIVE_TOL_COUNTS = 24;   // ~0.027 rev ≈ a few mm
+constexpr std::int32_t SLOW_ZONE_COUNTS  = 896;  // ramp speed down over the last rev
+constexpr int          POS_MIN_RPM       = 8;    // floor so it still creeps in
+
 // Consecutive ticks where both motors registered near-zero count delta
 // while we're commanding motion. Resets when motion is detected.
 int stall_ticks = 0;
@@ -100,6 +115,27 @@ void reset_integrators()
     for (auto& c : controllers) c.i_accum = 0.0f;
 }
 
+// Effective downward travel limit in mm: the soft stop if one is set, else the
+// hard stop. Both are clamped sane.
+float down_limit_mm(const config::Motion& m)
+{
+    if (m.soft_stop_mm > 0.0f) {
+        return std::min(m.soft_stop_mm, m.hard_stop_mm);
+    }
+    return m.hard_stop_mm;
+}
+
+// That limit expressed in encoder counts below the homed top. Returns -1 when
+// it can't be computed (no mm calibration), meaning "no down limit enforced".
+std::int32_t down_limit_counts(const config::Motion& m)
+{
+    if (m.mm_per_rev <= 0.0f) {
+        return -1;
+    }
+    return static_cast<std::int32_t>(down_limit_mm(m) *
+                                     encoder::COUNTS_PER_OUTPUT_REV / m.mm_per_rev);
+}
+
 // Sign convention for the speed loop: under Raise, both motors should
 // produce positive count delta; under Lower, negative. We pass the
 // "expected sign of count motion" into the loop so the same code handles
@@ -123,6 +159,29 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
             c.prev_count = (c.side == motor::Side::Left) ? count_l : count_r;
         }
         return;
+    }
+
+    // Position end-stops (graceful, not a fault). Once homed we stop at the top
+    // (pos 0) going up and at the down limit going down, rather than running
+    // into the mechanism and leaning on the stall watchdog. The top needs only
+    // the home reference; the down limit also needs mm calibration.
+    if (homed.load()) {
+        const std::int32_t pos = (count_l + count_r) / 2;
+        const std::int32_t dl  = down_limit_counts(m);
+        const bool at_limit = (dir == Direction::Raise && pos <= 0) ||
+                              (dir == Direction::Lower && dl >= 0 && pos >= dl);
+        if (at_limit) {
+            brake_both();
+            reset_integrators();
+            direction.store(Direction::Stop);
+            target_rpm.store(0);
+            stall_ticks  = 0;
+            active_ticks = 0;
+            for (auto& c : controllers) {
+                c.prev_count = (c.side == motor::Side::Left) ? count_l : count_r;
+            }
+            return;
+        }
     }
 
     // We're actively driving. Count time since the most recent idle→active
@@ -207,12 +266,48 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
 
         c.i_accum = std::clamp(c.i_accum + error * DT_S, -m.i_max, m.i_max);
 
-        const float ff_duty = setpoint * m.duty_per_rpm;
+        // Static breakaway offset (direction-dependent) plus the slope term.
+        const float ff_offset = (dir == Direction::Raise) ? m.ff_offset_raise_pct
+                                                           : m.ff_offset_lower_pct;
+        const float ff_duty = ff_offset + setpoint * m.duty_per_rpm;
         float duty          = ff_duty + m.kp * error + m.ki * c.i_accum;
         duty                = std::clamp(duty, 0.0f, 100.0f);
 
         motor::raw::drive(c.side, to_raw(dir), static_cast<int>(duty));
     }
+}
+
+// One tick of a position-seek: drive both motors toward target_counts (counts
+// below the homed top) via the synced speed loop, ramping the setpoint down
+// over the final revolution and braking once within tolerance. Reuses run_tick
+// for the actual PI + sync + stall/sync watchdogs, so a hit on the bottom stop
+// faults out exactly as a normal move would.
+void run_position_tick(const config::Motion& m)
+{
+    const std::int32_t pos = (encoder::count(motor::Side::Left) +
+                              encoder::count(motor::Side::Right)) / 2;
+    const std::int32_t err = target_counts.load() - pos;  // >0 ⇒ need to go down
+
+    if (std::abs(err) <= ARRIVE_TOL_COUNTS) {
+        motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+        reset_integrators();
+        position_mode.store(false);
+        arrived.store(true);
+        return;
+    }
+
+    // Down (lower) increases counts; up (raise) decreases them.
+    const Direction dir = (err > 0) ? Direction::Lower : Direction::Raise;
+
+    // Ease the speed setpoint down over the last revolution for a soft landing.
+    int setpoint = m.cover_rpm;
+    const std::int32_t mag = std::abs(err);
+    if (mag < SLOW_ZONE_COUNTS) {
+        setpoint = std::max(POS_MIN_RPM,
+                            static_cast<int>(m.cover_rpm * mag / SLOW_ZONE_COUNTS));
+    }
+
+    run_tick(m, dir, setpoint);
 }
 
 void control_task(void*)
@@ -244,9 +339,6 @@ void control_task(void*)
             tune_gen = g;
         }
 
-        const auto dir = direction.load();
-        const auto rpm = target_rpm.load();
-
         // Faulted state is latched — the fault path inside run_tick (or the
         // sync watchdog) already braked once. Skip ticks until stop()
         // clears the latch.
@@ -254,7 +346,11 @@ void control_task(void*)
             continue;
         }
 
-        run_tick(tune, dir, rpm);
+        if (position_mode.load()) {
+            run_position_tick(tune);
+        } else {
+            run_tick(tune, direction.load(), target_rpm.load());
+        }
     }
 }
 
@@ -279,6 +375,7 @@ void stop()
 {
     target_rpm.store(0);
     direction.store(Direction::Stop);
+    position_mode.store(false);
     fault.store(false);
     // The control task picks up the new state on the next tick; brake
     // immediately here so the motors don't keep coasting through that
@@ -358,9 +455,96 @@ HomeResult home()
     homing.store(false);
 
     const HomeResult result{ mtrs[0].done, mtrs[1].done };
+    // A valid zero reference exists only if both sides actually settled at the
+    // top (encoders were zeroed there).
+    homed.store(result.left && result.right);
     ESP_LOGI(TAG, "homing done: L=%s R=%s",
              result.left ? "ok" : "TIMEOUT", result.right ? "ok" : "TIMEOUT");
     return result;
+}
+
+GoToResult go_to_pct(float pct)
+{
+    pct = std::clamp(pct, 0.0f, 100.0f);
+    const float hard = config::get().motion.hard_stop_mm;
+    // 100% maps to the hard stop; go_to_mm then clamps to the soft stop.
+    return go_to_mm(pct / 100.0f * hard);
+}
+
+bool is_homed()
+{
+    return homed.load();
+}
+
+PositionMm position_mm()
+{
+    const auto m = config::get().motion;
+    auto mm = [&](motor::Side s) {
+        return static_cast<float>(encoder::count(s)) * m.mm_per_rev /
+               static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV);
+    };
+    return PositionMm{ homed.load() && m.mm_per_rev > 0.0f,
+                       mm(motor::Side::Left), mm(motor::Side::Right) };
+}
+
+GoToResult go_to_mm(float mm)
+{
+    const auto tune = config::get().motion;
+
+    auto pos_mm = [&](motor::Side s) {
+        return static_cast<float>(encoder::count(s)) * tune.mm_per_rev /
+               static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV);
+    };
+    auto result = [&](GoToStatus st) {
+        return GoToResult{ st, pos_mm(motor::Side::Left), pos_mm(motor::Side::Right) };
+    };
+
+    if (!homed.load()) {
+        return result(GoToStatus::NotHomed);
+    }
+    if (tune.mm_per_rev <= 0.0f) {
+        return result(GoToStatus::NotCalibrated);
+    }
+    if (mm < 0.0f) {
+        mm = 0.0f;  // can't go above the top reference
+    }
+    const float limit = down_limit_mm(tune);
+    if (mm > limit) {
+        mm = limit;  // never past the soft/hard down limit
+    }
+
+    const auto target = static_cast<std::int32_t>(
+        mm * static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV) / tune.mm_per_rev);
+
+    // Clean slate, then hand the seek to the control task.
+    fault.store(false);
+    reset_integrators();
+    arrived.store(false);
+    target_counts.store(target);
+    position_mode.store(true);
+
+    ESP_LOGI(TAG, "go_to %.1f mm (target %ld counts)", mm, static_cast<long>(target));
+
+    // Generous cap: full travel at cover_rpm plus the slow-down tail.
+    const int timeout_ticks = 30 * CONTROL_HZ;
+    for (int t = 0; t < timeout_ticks; ++t) {
+        vTaskDelay(TICK);
+        if (arrived.load() || fault.load()) {
+            break;
+        }
+    }
+
+    // Ensure we're stopped and the control task is out of position mode.
+    position_mode.store(false);
+    motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+
+    const GoToStatus st = arrived.load() ? GoToStatus::Arrived
+                        : fault.load()   ? GoToStatus::Faulted
+                                         : GoToStatus::Timeout;
+    const auto r = result(st);
+    ESP_LOGI(TAG, "go_to done: status=%d L=%.1fmm R=%.1fmm",
+             static_cast<int>(st), r.mm_l, r.mm_r);
+    return r;
 }
 
 void start()

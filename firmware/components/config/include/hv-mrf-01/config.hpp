@@ -38,8 +38,16 @@ enum class Error : std::uint8_t {
 struct Motion {
     // Feedforward slope: percent PWM duty applied per RPM of target speed.
     // Carries the bulk of the command so the integrator only trims. Equal to
-    // 1 / (no-load RPM-per-%duty); ~0.6 measured open-loop, re-fit under load.
-    float duty_per_rpm = 1.0f;
+    // 1 / (RPM-per-%duty); ~0.33 measured open-loop under cord load.
+    float duty_per_rpm = 0.33f;
+
+    // Static feedforward offset (% duty) added on top of the slope to overcome
+    // direction-dependent breakaway. Measured open-loop: raising needs ~10% to
+    // start moving (friction + gravity), lowering ~0 (gravity assists). Applied
+    // only while actively driving, so the integrator starts near the right duty
+    // instead of winding up from zero each move.
+    float ff_offset_raise_pct = 10.0f;
+    float ff_offset_lower_pct = 0.0f;
 
     // Proportional gain: percent duty added per RPM of speed error. Provides
     // the immediate response; raise for snappier tracking, lower if it whines
@@ -97,6 +105,23 @@ struct Motion {
     // Overall safety cap on a homing run: if a motor never settles within this
     // (free-spinning, encoder fault), homing aborts and brakes.
     int home_timeout_s = 30;
+
+    // Millimetres of cord travel per output-shaft revolution (effective spool
+    // circumference). The one calibration mapping encoder counts to physical
+    // distance for go-to-position. Measure: home, drive a known number of revs,
+    // measure the drop, divide. 0 = uncalibrated; go_to_mm refuses until set.
+    float mm_per_rev = 0.0f;
+
+    // Hard limit on downward travel from the homed top, in mm — the full range
+    // of the blind. go_to_pct(100) maps to this, and downward motion never
+    // passes it. Per-device (each blind's drop may differ).
+    float hard_stop_mm = 1600.0f;
+
+    // Optional operational down limit, in mm, for a blind with an obstruction
+    // below: downward motion (go_to_mm and a manual lower) stops here instead
+    // of at hard_stop_mm, even though the hard range is larger. 0 = unset (the
+    // hard stop is the only down limit). Should be < hard_stop_mm when set.
+    float soft_stop_mm = 0.0f;
 };
 
 // WiFi station credentials for debug mode. The radio is shared with Zigbee,

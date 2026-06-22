@@ -91,6 +91,8 @@ void load_motion(Config& cfg)
     }
 
     load_f32(h, "duty_per_rpm", cfg.motion.duty_per_rpm);
+    load_f32(h, "ff_off_raise", cfg.motion.ff_offset_raise_pct);
+    load_f32(h, "ff_off_lower", cfg.motion.ff_offset_lower_pct);
     load_f32(h, "kp", cfg.motion.kp);
     load_f32(h, "ki", cfg.motion.ki);
     load_f32(h, "i_max", cfg.motion.i_max);
@@ -103,6 +105,9 @@ void load_motion(Config& cfg)
     load_i32(h, "home_duty", cfg.motion.home_duty_pct);
     load_i32(h, "home_settle", cfg.motion.home_settle_ms);
     load_i32(h, "home_to", cfg.motion.home_timeout_s);
+    load_f32(h, "mm_per_rev", cfg.motion.mm_per_rev);
+    load_f32(h, "hard_stop_mm", cfg.motion.hard_stop_mm);
+    load_f32(h, "soft_stop_mm", cfg.motion.soft_stop_mm);
 
     nvs_close(h);
 }
@@ -165,7 +170,9 @@ std::expected<void, Error> save_motion(const Motion& m)
     }
 
     const esp_err_t writes =
-        save_f32(h, "duty_per_rpm", m.duty_per_rpm) | save_f32(h, "kp", m.kp) |
+        save_f32(h, "duty_per_rpm", m.duty_per_rpm) |
+        save_f32(h, "ff_off_raise", m.ff_offset_raise_pct) |
+        save_f32(h, "ff_off_lower", m.ff_offset_lower_pct) | save_f32(h, "kp", m.kp) |
         save_f32(h, "ki", m.ki) | save_f32(h, "i_max", m.i_max) |
         save_f32(h, "k_sync", m.k_sync) | save_i32(h, "cover_rpm", m.cover_rpm) |
         save_i32(h, "sync_fault", m.sync_fault_limit) |
@@ -174,7 +181,10 @@ std::expected<void, Error> save_motion(const Motion& m)
         save_i32(h, "grace_ms", m.startup_grace_ms) |
         save_i32(h, "home_duty", m.home_duty_pct) |
         save_i32(h, "home_settle", m.home_settle_ms) |
-        save_i32(h, "home_to", m.home_timeout_s);
+        save_i32(h, "home_to", m.home_timeout_s) |
+        save_f32(h, "mm_per_rev", m.mm_per_rev) |
+        save_f32(h, "hard_stop_mm", m.hard_stop_mm) |
+        save_f32(h, "soft_stop_mm", m.soft_stop_mm);
 
     if (writes != ESP_OK) {
         nvs_close(h);
