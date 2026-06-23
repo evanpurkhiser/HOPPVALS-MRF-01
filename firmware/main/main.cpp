@@ -22,6 +22,7 @@
 #include "hv-mrf-01/led.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
+#include "hv-mrf-01/position_report.hpp"
 #include "hv-mrf-01/zigbee.hpp"
 
 namespace {
@@ -50,6 +51,16 @@ void reboot_into_debug(const char *why)
 void enter_debug_recovery(void *)
 {
     reboot_into_debug("no Zigbee join within recovery window");
+}
+
+// Bridge the transport-agnostic position reporter to the hub. The reporter
+// posts PositionChanged on the bus; we mirror it onto the Window Covering
+// cluster. Runs in the default event loop task (not a Zigbee callback), so
+// taking the stack lock in report_position is safe here.
+void on_position_changed(void *, esp_event_base_t, std::int32_t, void *data)
+{
+    const auto pct = *static_cast<std::uint8_t *>(data);
+    hvmrf01::zigbee::report_position(pct);
 }
 
 void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
@@ -87,6 +98,9 @@ extern "C" void app_main()
     ESP_ERROR_CHECK(esp_event_handler_register(hvmrf01::zigbee::EVENTS,
                                                ESP_EVENT_ANY_ID, &on_zigbee_event,
                                                nullptr));
+    ESP_ERROR_CHECK(esp_event_handler_register(hvmrf01::position_report::EVENTS,
+                                               ESP_EVENT_ANY_ID, &on_position_changed,
+                                               nullptr));
     ESP_LOGI(TAG, "Starting hv-mrf-01 firmware");
     // Bring up NVS and load persisted config before any consumer reads it.
     if (auto r = hvmrf01::config::init(); !r) {
@@ -112,6 +126,7 @@ extern "C" void app_main()
 
     hvmrf01::console::start();        // serial REPL — needs motor + encoder up first
     hvmrf01::zigbee::start();
+    hvmrf01::position_report::start();  // push cover position to the hub as it moves
 
     // Arm the recovery fallback; the JoinedNetwork handler cancels it on join.
     const esp_timer_create_args_t recovery_args{

@@ -113,6 +113,18 @@ struct PositionMm
 };
 PositionMm position_mm();
 
+// Current cover position as a ZCL lift percentage: 0 = fully open (the homed
+// top), 100 = fully closed (hard_stop_mm down) — the inverse mapping go_to_pct
+// accepts, and the value reported to the hub. Uses the average of both motors.
+// valid is false when there's no usable reference (not homed) or no mm
+// calibration, in which case pct is meaningless. Cheap enough to poll.
+struct PositionPct
+{
+    bool         valid;
+    std::uint8_t pct;
+};
+PositionPct position_pct();
+
 // Start the 100 Hz control task and register the ZCL cover command handlers
 // (open/close/stop/go-to) with the zigbee component — the controller owns the
 // cover semantics. Call once from app_main, after motor and encoder are up and

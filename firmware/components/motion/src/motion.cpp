@@ -419,23 +419,17 @@ zigbee::CommandStatus handle_go_to(std::uint8_t pct)
     // ZCL lift percentage: 0% = fully open (top), 100% = fully closed (bottom),
     // which matches go_to_pct's 0 = top / 100 = hard stop. Non-blocking start —
     // blocking the Zigbee callback for the whole move would stall the stack.
+    //
+    // We don't report position here: the position_report task pushes the actual
+    // position as the blind travels and a final value on arrival, so the hub
+    // tracks truth rather than the (optimistic) commanded target. Reporting from
+    // this callback would also deadlock — report_position takes the stack lock
+    // this handler already holds.
     if (!begin_go_to_pct(static_cast<float>(pct))) {
         ESP_LOGW(TAG, "go-to %u%% rejected (not homed / mm_per_rev unset)", pct);
         return zigbee::CommandStatus::Failure;
     }
-
-    // Report where it will actually end: a soft stop caps downward travel, so a
-    // command past it ends at the soft-stop percentage, not the commanded one.
-    const auto&  m        = config::get().motion;
-    std::uint8_t reported = pct;
-    if (m.hard_stop_mm > 0.0f && m.soft_stop_mm > 0.0f && m.soft_stop_mm < m.hard_stop_mm) {
-        const auto cap = static_cast<std::uint8_t>(m.soft_stop_mm / m.hard_stop_mm * 100.0f);
-        if (reported > cap) {
-            reported = cap;
-        }
-    }
-    ESP_LOGI(TAG, "go-to %u%% -> move started (reporting %u%%)", pct, reported);
-    zigbee::report_position(reported);
+    ESP_LOGI(TAG, "go-to %u%% -> move started", pct);
     return zigbee::CommandStatus::Success;
 }
 
@@ -578,6 +572,20 @@ PositionMm position_mm()
     };
     return PositionMm{ homed.load() && m.mm_per_rev > 0.0f,
                        mm(motor::Side::Left), mm(motor::Side::Right) };
+}
+
+PositionPct position_pct()
+{
+    const auto m = config::get().motion;
+    if (!homed.load() || m.mm_per_rev <= 0.0f || m.hard_stop_mm <= 0.0f) {
+        return PositionPct{ false, 0 };
+    }
+    const std::int32_t pos = (encoder::count(motor::Side::Left) +
+                              encoder::count(motor::Side::Right)) / 2;
+    const float mm  = static_cast<float>(pos) * m.mm_per_rev /
+                      static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV);
+    const float pct = std::clamp(mm / m.hard_stop_mm * 100.0f, 0.0f, 100.0f);
+    return PositionPct{ true, static_cast<std::uint8_t>(std::lround(pct)) };
 }
 
 bool begin_go_to_mm(float mm, int rpm)
