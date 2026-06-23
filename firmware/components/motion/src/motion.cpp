@@ -114,6 +114,19 @@ void reset_integrators()
     for (auto& c : controllers) c.i_accum = 0.0f;
 }
 
+// Latch a fault and brake: the control task skips ticks until stop() clears it.
+// Callers log the specific cause first.
+void enter_fault()
+{
+    fault.store(true);
+    direction.store(Direction::Stop);
+    position_mode.store(false);
+    brake_both();
+    reset_integrators();
+    stall_ticks  = 0;
+    active_ticks = 0;
+}
+
 // Effective downward travel limit in mm: the soft stop if one is set, else the
 // hard stop. Both are clamped sane.
 float down_limit_mm(const config::Motion& m)
@@ -174,6 +187,8 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
             reset_integrators();
             direction.store(Direction::Stop);
             target_rpm.store(0);
+            position_mode.store(false);
+            arrived.store(true);
             stall_ticks  = 0;
             active_ticks = 0;
             for (auto& c : controllers) {
@@ -196,11 +211,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
         ESP_LOGW(TAG, "sync fault: |%ld - %ld| = %d > %d; braking",
                  static_cast<long>(count_l), static_cast<long>(count_r),
                  sync_err, m.sync_fault_limit);
-        fault.store(true);
-        direction.store(Direction::Stop);
-        brake_both();
-        reset_integrators();
-        stall_ticks = 0;
+        enter_fault();
         return;
     }
 
@@ -219,12 +230,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
             if (++stall_ticks >= stall_fault_ticks) {
                 ESP_LOGW(TAG, "stall fault: both motors stopped %d ms at target %d RPM",
                          m.stall_fault_ms, base_setpoint_rpm);
-                fault.store(true);
-                direction.store(Direction::Stop);
-                brake_both();
-                reset_integrators();
-                stall_ticks  = 0;
-                active_ticks = 0;
+                enter_fault();
                 return;
             }
         } else {
@@ -551,6 +557,14 @@ GoToResult go_to_pct(float pct, int rpm)
 bool is_homed()
 {
     return homed.load();
+}
+
+bool is_moving()
+{
+    if (homing.load() || position_mode.load()) {
+        return true;
+    }
+    return direction.load() != Direction::Stop && target_rpm.load() > 0;
 }
 
 PositionMm position_mm()

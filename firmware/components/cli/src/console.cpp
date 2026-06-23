@@ -91,6 +91,20 @@ const char* side_label(hvmrf01::motor::Side s)
     return s == S::Left ? "L" : s == S::Right ? "R" : "both";
 }
 
+// Emit the machine-parseable position line the web UI consumes:
+//   pos L=<mm> R=<mm> moving=<0|1> valid=<0|1>
+// valid=0 means there's no usable reference (not homed / mm_per_rev unset), so
+// the mm figures are meaningless. Used by `pos` and the `motion stop` reply so
+// the UI always learns the final position when a move ends.
+void emit_position()
+{
+    const auto p = hvmrf01::motion::position_mm();
+    emit("pos L=%.1fmm R=%.1fmm moving=%d valid=%d\n",
+         p.mm_l, p.mm_r,
+         hvmrf01::motion::is_moving() ? 1 : 0,
+         p.valid ? 1 : 0);
+}
+
 int cmd_fwd(int argc, char** argv)
 {
     const auto s = parse_side(argc, argv, 1);
@@ -487,6 +501,7 @@ int cmd_motion(int argc, char** argv)
     if (argc >= 2 && std::string_view{argv[1]} == "stop") {
         hvmrf01::motion::stop();
         emit("motion: stopped\n");
+        emit_position();
         return 0;
     }
     if (argc < 3) {
@@ -793,9 +808,7 @@ int cmd_gotopct(int argc, char** argv)
 // Print the current position in mm below the homed top.
 int cmd_pos(int, char**)
 {
-    const auto p = hvmrf01::motion::position_mm();
-    emit("L=%.1f mm R=%.1f mm%s\n", p.mm_l, p.mm_r,
-         p.valid ? "" : "  (not homed / mm_per_rev unset — value meaningless)");
+    emit_position();
     return 0;
 }
 

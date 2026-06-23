@@ -95,6 +95,11 @@ bool begin_go_to_pct(float pct, int rpm = 0);
 // boot). go_to_mm requires it.
 bool is_homed();
 
+// True while the controller is actively driving — a manual move, a position
+// seek, or a homing run. False when idle/braked/faulted. Lets a caller poll for
+// the end of a fire-and-forget move (begin_go_to_*).
+bool is_moving();
+
 // Current per-motor position, in mm below the homed top. valid is false when
 // there's no usable reference (not homed) or no mm calibration — the mm values
 // are then meaningless.
