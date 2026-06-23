@@ -38,11 +38,12 @@ enum class Event : std::int32_t
 // application doesn't need to include any SDK headers.
 enum class CommandStatus : std::uint8_t
 {
-    Success      = 0x00, // command accepted
-    Failure      = 0x01, // generic failure
-    InvalidValue = 0x87, // arg out of range
-    NotFound     = 0x8b, // cluster/endpoint not configured
-    NotCalibrated = 0xc2 // device hasn't been calibrated yet (ZCL CalibrationError)
+    Success            = 0x00, // command accepted
+    Failure            = 0x01, // generic failure
+    UnsupportedCommand = 0x81, // command not implemented (ZCL UNSUP_CLUSTER_COMMAND)
+    InvalidValue       = 0x87, // arg out of range
+    NotFound           = 0x8b, // cluster/endpoint not configured
+    NotCalibrated      = 0xc2, // device hasn't been calibrated yet (ZCL CalibrationError)
 };
 
 struct CoverHandlers

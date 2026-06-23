@@ -41,8 +41,9 @@ constexpr std::uint32_t SECONDARY_CHANNELS = 0x07FFF800U; // ch 11..26
 constexpr auto          STORAGE_PARTITION  = "zb_storage";
 
 // Registered cover handlers. Set via register_cover_handlers(). Defaults to
-// all-null; the dispatch path returns CommandStatus::Failure for any unset
-// handler.
+// all-null; a supported command with no handler set returns Failure, while a
+// command we don't implement returns UnsupportedCommand (see
+// dispatch_cover_command).
 CoverHandlers cover_handlers{};
 
 // RAII wrapper around the Zigbee stack lock. Acquire on construction, release
@@ -162,7 +163,7 @@ CommandStatus dispatch_cover_command(std::uint8_t cmd_id,
                    ? cover_handlers.go_to_percent(msg->in.payload.lift_percentage)
                    : CommandStatus::Failure;
     default:
-        return CommandStatus::Failure;
+        return CommandStatus::UnsupportedCommand;
     }
 }
 
