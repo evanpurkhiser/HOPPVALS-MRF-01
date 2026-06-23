@@ -34,10 +34,11 @@ constexpr int   MS_PER_TICK = 1000 / CONTROL_HZ;
 constexpr UBaseType_t TASK_PRIO   = 6;
 constexpr std::uint32_t STACK_SZ  = 4096;
 
-// ── Shared command state (writer = anyone, reader = control task) ────────
+// Shared command state (writer = anyone, reader = control task)
 //
 // `target_rpm` is the magnitude requested by set_target(); `direction`
 // turns it into a signed-velocity intent. `Stop` is the idle/braked state.
+
 std::atomic<int>       target_rpm{ 0 };
 std::atomic<Direction> direction{ Direction::Stop };
 std::atomic<bool>      fault{ false };
@@ -65,7 +66,8 @@ int stall_ticks = 0;
 // Stall watchdog ignores readings until this exceeds the grace window.
 int active_ticks = 0;
 
-// ── Per-motor controller state (owned by the control task) ───────────────
+// Per-motor controller state (owned by the control task)
+
 struct ControllerState
 {
     motor::Side  side;
@@ -79,7 +81,7 @@ std::array<ControllerState, 2> controllers{
     ControllerState{ .side = motor::Side::Right, .label = "R" },
 };
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// Helpers
 
 // Measured RPM over the last tick. Positive = encoder counts rising,
 // regardless of commanded direction — the controller compares magnitudes.
@@ -238,13 +240,10 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
         }
     }
 
-    // Sign of expected count motion per direction. Used to flip the
-    // measured-RPM and sync-bias terms so the PI sees them in the
-    // commanded reference frame (always "positive = on target").
-    // Raise drives Mode::Forward (counts go negative), Lower drives
-    // Mode::Reverse (counts go positive). dir_sign projects measured RPM
-    // and sync bias into the commanded reference frame ("positive = on
-    // target") regardless of encoder count direction.
+    // Sign of expected count motion per direction. Raise drives Mode::Forward
+    // (counts go negative), Lower drives Mode::Reverse (counts go positive).
+    // dir_sign projects the measured-RPM and sync-bias terms into the commanded
+    // reference frame ("positive = on target") regardless of count direction.
     const float dir_sign = (dir == Direction::Raise) ? -1.0f : 1.0f;
 
     for (auto& c : controllers) {
@@ -286,11 +285,8 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
     }
 }
 
-// One tick of a position-seek: drive both motors toward target_counts (counts
-// below the homed top) via the synced speed loop, ramping the setpoint down
-// over the final revolution and braking once within tolerance. Reuses run_tick
-// for the actual PI + sync + stall/sync watchdogs, so a hit on the bottom stop
-// faults out exactly as a normal move would.
+// Convert a distance in mm to encoder counts, falling back to `fallback` when
+// there's no mm calibration (position mode requires it, so this shouldn't hit).
 std::int32_t mm_to_counts(const config::Motion& m, float mm, std::int32_t fallback)
 {
     if (m.mm_per_rev <= 0.0f) {
@@ -300,6 +296,11 @@ std::int32_t mm_to_counts(const config::Motion& m, float mm, std::int32_t fallba
         1, static_cast<std::int32_t>(mm * encoder::COUNTS_PER_OUTPUT_REV / m.mm_per_rev));
 }
 
+// One tick of a position-seek: drive both motors toward target_counts (counts
+// below the homed top) via the synced speed loop, ramping the setpoint down
+// over the final revolution and braking once within tolerance. Reuses run_tick
+// for the actual PI + sync + stall/sync watchdogs, so a hit on the bottom stop
+// faults out exactly as a normal move would.
 void run_position_tick(const config::Motion& m)
 {
     const std::int32_t pos = (encoder::count(motor::Side::Left) +
@@ -381,7 +382,7 @@ void control_task(void*)
     }
 }
 
-// ── Cover command handlers (registered with the zigbee component) ──────────
+// Cover command handlers (registered with the zigbee component)
 //
 // The ZCL Window Covering cluster routes here. The controller owns motor state,
 // so the cover semantics (open = raise, close = lower, go-to = position seek)
@@ -389,6 +390,7 @@ void control_task(void*)
 // motor component no longer needs to know about zigbee or motion. Open/close
 // speed comes from config::Motion::cover_rpm, re-fittable at runtime. These run
 // in the zigbee task context, so they kick off motion and return immediately.
+
 zigbee::CommandStatus handle_open()
 {
     const int rpm = config::get().motion.cover_rpm;

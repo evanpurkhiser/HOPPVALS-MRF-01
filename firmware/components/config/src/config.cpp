@@ -24,13 +24,14 @@ constexpr auto* NS_NETWORK = "network";
 constexpr auto* NS_SYS         = "sys";
 constexpr auto* KEY_DEBUG_BOOT = "dbg_boot";
 
-// ── Double buffer ─────────────────────────────────────────────────────────
+// Double buffer
 //
 // Two storage slots and an atomic pointer to the active one. Writers (init /
 // save, single-threaded) fill the inactive slot then publish it with a release
 // store; readers acquire-load the pointer. The active slot is never mutated in
 // place, so a reader copying through the pointer always sees a consistent
 // Config even if a publish races it.
+
 std::atomic<const Config*> active{ nullptr };
 std::atomic<std::uint32_t> gen{ 0 };
 Config                     slots[2]{};
@@ -47,10 +48,11 @@ void publish(const Config& cfg)
     gen.fetch_add(1, std::memory_order_release);
 }
 
-// ── NVS field helpers ───────────────────────────────────────────────────
+// NVS field helpers
 //
 // NVS has no native float type, so floats round-trip through their u32 bit
 // pattern. A missing key (ESP_ERR_NVS_NOT_FOUND) leaves the default in place.
+
 void load_f32(nvs_handle_t h, const char* key, float& out)
 {
     std::uint32_t raw = 0;

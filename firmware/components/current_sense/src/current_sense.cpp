@@ -18,7 +18,7 @@ namespace {
 
 constexpr auto* TAG = "hv-mrf-01.current";
 
-// ── IPROPI → current conversion (PCB values, DRV8876 datasheet §7.3.3.1) ───
+// IPROPI → current conversion (PCB values, DRV8876 datasheet §7.3.3.1)
 // V_IPROPI = I_OUT × A_IPROPI × R_IPROPI = I_OUT × 1000 µA/A × 560 Ω
 //          = I_OUT × 0.56 V/A. Invert: I_OUT(mA) = V(mV) × 1000 / 560.
 //
@@ -28,6 +28,7 @@ constexpr auto* TAG = "hv-mrf-01.current";
 // no PWM synchronization. BUT in coast/Hi-Z (shared nSLEEP low) IPROPI reads
 // ~0; that's "no data", not "zero current". Accuracy is gain-limited (~±6.5%)
 // above 0.5 A and offset-limited (fixed ±~7.5 mA) below ~150 mA.
+
 constexpr int R_IPROPI_OHMS = 560;
 constexpr int A_IPROPI_UA_A = 1000;  // µA of IPROPI per A of output
 
@@ -36,8 +37,9 @@ constexpr std::int32_t mv_to_ma(int mv)
     return static_cast<std::int32_t>(mv) * 1'000'000 / (A_IPROPI_UA_A * R_IPROPI_OHMS);
 }
 
-// ── ADC channel mapping ────────────────────────────────────────────────────
+// ADC channel mapping
 // IPROPI_L → GPIO1 → ADC1_CH1, IPROPI_R → GPIO0 → ADC1_CH0.
+
 struct Channel
 {
     adc_channel_t chan;
@@ -56,7 +58,8 @@ constexpr TickType_t SAMPLE_PERIOD = pdMS_TO_TICKS(1000 / SAMPLE_HZ);
 constexpr UBaseType_t   TASK_PRIO = 6;
 constexpr std::uint32_t STACK_SZ  = 3072;
 
-// ── State ───────────────────────────────────────────────────────────────────
+// State
+
 adc_oneshot_unit_handle_t adc_unit = nullptr;
 std::array<adc_cali_handle_t, 2> cali{ nullptr, nullptr };
 
@@ -92,7 +95,7 @@ void sample_task(void*)
 void configure_channel(std::size_t i)
 {
     const adc_oneshot_chan_cfg_t chan_cfg{
-        .atten    = ADC_ATTEN_DB_12,        // full ~0..3.1 V; trip point sits at 1.65 V
+        .atten    = ADC_ATTEN_DB_12,        // full ~0..3.1 V input range
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_unit, CHANNELS[i].chan, &chan_cfg));

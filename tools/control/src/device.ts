@@ -1,4 +1,4 @@
-// WebSocket client for the HV-MRF-01 debug console.
+// websocket client for the HV-MRF-01 debug console.
 //
 // Protocol: one text frame out = one command line; one text frame back = that
 // command's captured output. The device serializes commands, so we keep at

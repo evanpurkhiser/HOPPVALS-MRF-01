@@ -138,7 +138,7 @@ export const SECTIONS: ConfigSection[] = [
             editable: true,
             kind: "number",
             description:
-              "Per-motor feedforward multiplier. The two motors aren't identical; trim the faster one down (e.g. 0.95) so both hit the target speed and the loop stops hunting. 1.0 = no trim.",
+              "Feedforward multiplier for the left motor. The two motors aren't identical; trim the faster side down (e.g. 0.95) so both hit the target speed and the loop stops hunting. 1.0 = no trim.",
           },
           {
             key: "motion.ff_trim_r",
@@ -146,7 +146,7 @@ export const SECTIONS: ConfigSection[] = [
             editable: true,
             kind: "number",
             description:
-              "Per-motor feedforward multiplier. The two motors aren't identical; trim the faster one down (e.g. 0.95) so both hit the target speed and the loop stops hunting. 1.0 = no trim.",
+              "Feedforward multiplier for the right motor. The two motors aren't identical; trim the faster side down (e.g. 0.95) so both hit the target speed and the loop stops hunting. 1.0 = no trim.",
           },
         ],
       },

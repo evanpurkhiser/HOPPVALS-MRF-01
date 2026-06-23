@@ -15,7 +15,8 @@ namespace {
 
 constexpr auto* TAG = "hv-mrf-01.motor";
 
-// ── Per-motor hardware mapping (PCB netlist, PH/EN mode) ──────────────────
+// Per-motor hardware mapping (PCB netlist, PH/EN mode)
+
 struct Motor
 {
     gpio_num_t     en;       // EN/IN1 — PWM (LEDC); EN=0 brakes
@@ -43,10 +44,11 @@ constexpr std::array<Motor, 2> BOTH{ MOTOR_L, MOTOR_R };
 // and holds position — so we keep this high except for an explicit coast.
 constexpr gpio_num_t MOTOR_SLEEP = GPIO_NUM_2;
 
-// ── PWM (LEDC) config ─────────────────────────────────────────────────────
+// PWM (LEDC) config
 // Both motors share LEDC_TIMER_1 so they always PWM at the same frequency.
 // Each motor's EN pin gets its own channel. LED uses TIMER_0/CHAN_0; we're
 // on TIMER_1 with CHAN_1 (L) and CHAN_2 (R).
+
 constexpr auto LEDC_MODE       = LEDC_LOW_SPEED_MODE;
 constexpr auto LEDC_TIMER      = LEDC_TIMER_1;
 constexpr auto LEDC_RESOLUTION = LEDC_TIMER_8_BIT;
@@ -60,7 +62,7 @@ bool drivers_enabled     = false;
 
 constexpr std::size_t idx(const Motor& m) { return &m == &MOTOR_L ? 0 : 1; }
 
-// ── Low-level driver helpers ───────────────────────────────────────────────
+// Low-level driver helpers
 
 void apply_duty(const Motor& m, int pct)
 {
@@ -117,7 +119,7 @@ void each(Side s, Fn&& fn)
     if (s == Side::Right || s == Side::Both) fn(MOTOR_R);
 }
 
-// ── Hardware init ─────────────────────────────────────────────────────────
+// Hardware init
 
 void configure_gpio()
 {

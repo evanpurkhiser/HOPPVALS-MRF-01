@@ -73,9 +73,7 @@ template <typename T> void post(Event ev, const T& payload) noexcept
     esp_event_post(EVENTS, std::to_underlying(ev), &payload, sizeof(payload), portMAX_DELAY);
 }
 
-// ---------------------------------------------------------------------------
 // SDK callbacks (must be C-callable; use extern "C" linkage for clarity).
-// ---------------------------------------------------------------------------
 
 extern "C" void alarm_restart_commissioning(std::uint8_t mode)
 {
@@ -271,9 +269,7 @@ extern "C" void zcl_action_handler(ezb_zcl_core_action_callback_id_t cb_id, void
     }
 }
 
-// ---------------------------------------------------------------------------
 // Endpoint construction
-// ---------------------------------------------------------------------------
 
 // Build the Basic cluster's SWBuildID payload from the firmware version that
 // ESP-IDF bakes in at build time (PROJECT_VER, derived from `git describe` —

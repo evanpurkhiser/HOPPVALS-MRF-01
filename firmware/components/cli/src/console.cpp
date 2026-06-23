@@ -27,7 +27,7 @@ namespace {
 
 constexpr auto* TAG = "hv-mrf-01.console";
 
-// ── Output capture ────────────────────────────────────────────────────────
+// Output capture
 //
 // Commands print via emit() rather than printf(). Normally that goes straight
 // to stdout (the USB-JTAG REPL). While run_line() executes a command on behalf
@@ -39,6 +39,7 @@ constexpr auto* TAG = "hv-mrf-01.console";
 // that another task is producing. capture_mutex separately serializes
 // run_line() itself, because esp_console_run() parses into shared internal
 // state and is not re-entrant.
+
 std::mutex                capture_mutex;
 thread_local std::string* capture_buf = nullptr;
 

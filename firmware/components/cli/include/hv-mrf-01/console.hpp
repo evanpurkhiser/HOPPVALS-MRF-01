@@ -9,17 +9,8 @@
 // path captures into a string instead of writing to the serial port.
 //
 // Connect over USB with:  make monitor  (or screen /dev/cu.usbmodem* 115200)
-//
-// Commands once attached:
-//   fwd / rev / brake / coast    — drive a motor in that mode
-//   pwm <0-100>                  — set PWM duty %
-//   freq <hz>                    — set PWM frequency (e.g. 25000)
-//   spin / ramp / trace          — open-loop bench tests with CSV output
-//   motion <rpm> raise|lower     — closed-loop speed control
-//   config                       — view/set/save persisted configuration
-//   debug                        — reboot into WiFi debug mode
-//   state / enc / cur / rpm      — read motor + sensor state
-//   help                         — list all commands
+// Run `help` once attached for the command list (the COMMANDS table in
+// console.cpp is the source of truth).
 
 namespace hvmrf01::console {
 

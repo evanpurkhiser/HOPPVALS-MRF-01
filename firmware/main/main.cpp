@@ -1,9 +1,11 @@
-// Top-level wiring. main.cpp is intentionally thin: it brings the default
-// event loop up, registers an application-level listener for Zigbee events,
-// and hands off to the zigbee component which owns the actual stack.
+// Top-level wiring. app_main brings up the default event loop, loads persisted
+// config, and starts the hardware stack (motor, encoder, current sense, motion,
+// LED). It then selects this boot's radio personality — normal Zigbee operation
+// or the one-shot WiFi debug console — and, in normal mode, arms a recovery
+// fallback that reboots into debug mode if the Zigbee network is never joined.
 //
-// Once we add motor/motion/persistence components, they'll each register
-// handlers on the same event bus. This file shouldn't grow.
+// The components own their own subsystems and talk over the esp_event bus; main
+// just sequences their bring-up and registers the app-level Zigbee listener.
 
 #include <cinttypes>
 
@@ -77,7 +79,6 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
     }
 }
 
-
 }  // namespace
 
 extern "C" void app_main()
@@ -94,10 +95,10 @@ extern "C" void app_main()
     }
     // Hardware stack comes up in both modes so the CLI and benchmarks work
     // whether we're talking Zigbee or the WiFi debug console.
-    hvmrf01::motor::start();          // registers cover handlers, enables drivers
+    hvmrf01::motor::start();          // configure pins + drivers (land in brake)
     hvmrf01::encoder::start();        // PCNT quadrature readers for both motors
     hvmrf01::current_sense::start();  // ADC1 IPROPI sampling task (100 Hz)
-    hvmrf01::motion::start();         // 100 Hz closed-loop speed control task
+    hvmrf01::motion::start();         // 100 Hz speed loop; registers cover handlers
     hvmrf01::led::start();
 
     // One-shot debug flag (set over Zigbee/CLI) selects the radio personality

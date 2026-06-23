@@ -166,14 +166,14 @@ struct Network {
     int connect_timeout_s = 30;
 };
 
-// The full device configuration. Grows by composition — add a sub-struct
-// (e.g. Ota) and a matching NVS namespace as features land.
+// The full device configuration. Grows by composition — each new feature adds
+// a sub-struct here and a matching NVS namespace.
 struct Config {
     Motion  motion;
     Network network;
 };
 
-// ── One-shot "boot into debug mode" flag ──────────────────────────────────
+// One-shot "boot into debug mode" flag
 //
 // A persisted boolean, separate from Config, that records the intent to enter
 // debug mode on the next boot. Set it (over Zigbee or the CLI) and reboot;

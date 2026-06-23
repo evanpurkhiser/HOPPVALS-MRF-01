@@ -11,10 +11,11 @@ namespace hvmrf01::zigbee {
 // the Zigbee task posts events from inside the ZCL action handler.
 ESP_EVENT_DECLARE_BASE(EVENTS);
 
-// ── Notifications: event bus ─────────────────────────────────────────────
+// Notifications: event bus
 //
 // Things downstream code may care about but doesn't need to respond to.
 // Multiple subscribers are fine. Subscribe via esp_event_handler_register.
+
 enum class Event : std::int32_t
 {
     JoinedNetwork, // no data
@@ -23,11 +24,11 @@ enum class Event : std::int32_t
     EnterDebug,    // no data: the "Debug Mode" switch was turned on
 };
 
-// ── Commands: synchronous handler interface ──────────────────────────────
+// Commands: synchronous handler interface
 //
 // Cover commands have request/response semantics — the hub waits for a ZCL
-// status code in response. The application (motor module) registers a set
-// of handlers; the Zigbee component calls them synchronously from inside
+// status code in response. The application (the motion controller) registers a
+// set of handlers; the Zigbee component calls them synchronously from inside
 // the ZCL command callback and uses the returned status as the response.
 //
 // Handlers run in the Zigbee task context. Keep them fast and non-blocking —
@@ -57,7 +58,7 @@ struct CoverHandlers
 // again replaces the previous set.
 void register_cover_handlers(const CoverHandlers& handlers);
 
-// ── State updates: motor → Zigbee, free function ─────────────────────────
+// State updates: motion → Zigbee, free function
 //
 // Push current cover position back to the hub. Writes the Window Covering
 // cluster's CurrentPositionLiftPercentage attribute, which the SDK then

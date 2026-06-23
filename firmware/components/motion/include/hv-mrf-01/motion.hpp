@@ -17,8 +17,10 @@
 // brake both and enter a faulted state. Subsequent set_target() calls
 // are ignored until stop() clears the fault.
 //
-// Scope (v0): constant target RPM in one direction. Trajectory generation
-// (trapezoid + easing, spring) and position targeting layer on top later.
+// Beyond the speed loop, the controller homes against the top hard stop and
+// seeks absolute positions (go_to_mm/pct) with a soft-landing approach that
+// eases the setpoint down over the final revolution. Still open: full
+// trajectory generation (trapezoidal accel + spring easing).
 
 namespace hvmrf01::motion {
 
