@@ -9,6 +9,36 @@
 
 export type Status = "disconnected" | "connecting" | "connected" | "error";
 
+// Current blind position, decoded from a device `pos L=… R=… moving=… valid=…`
+// line (emitted by `pos` and the `motion stop` reply). mm is the L/R average,
+// in mm below the homed top. valid is false when there's no usable reference
+// (not homed / mm_per_rev unset), so the mm figures are meaningless.
+export interface Position {
+  mm: number;
+  mmL: number;
+  mmR: number;
+  moving: boolean;
+  valid: boolean;
+}
+
+const POS_RE = /pos L=(-?[\d.]+)mm R=(-?[\d.]+)mm moving=([01]) valid=([01])/;
+
+// Pull a Position out of any frame that carries the canonical position line,
+// or null if the frame has none.
+export function parsePosition(text: string): Position | null {
+  const m = text.match(POS_RE);
+  if (!m) return null;
+  const mmL = parseFloat(m[1]);
+  const mmR = parseFloat(m[2]);
+  return {
+    mm: (mmL + mmR) / 2,
+    mmL,
+    mmR,
+    moving: m[3] === "1",
+    valid: m[4] === "1",
+  };
+}
+
 export interface LogEntry {
   id: number;
   ts: number;
@@ -42,6 +72,10 @@ export class DeviceClient {
   status: Status = "disconnected";
   onStatus: (s: Status) => void = () => {};
   onLog: (e: LogEntry) => void = () => {};
+  // Fires for any frame carrying a position line, regardless of which command
+  // (if any) it answers — so an out-of-band `motion stop` reply still updates
+  // the UI's position readout.
+  onPosition: (p: Position) => void = () => {};
 
   private setStatus(s: Status) {
     this.status = s;
@@ -76,6 +110,8 @@ export class DeviceClient {
       const text = typeof ev.data === "string" ? ev.data : "[binary frame]";
       const w = this.waiters.shift();
       this.log("rx", text);
+      const pos = parsePosition(text);
+      if (pos) this.onPosition(pos);
       if (w) {
         clearTimeout(w.timer);
         w.resolve(text);

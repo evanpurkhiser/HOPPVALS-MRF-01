@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DeviceClient, type LogEntry, type Status } from "./device.ts";
+import {
+  DeviceClient,
+  parsePosition,
+  type LogEntry,
+  type Position,
+  type Status,
+} from "./device.ts";
 import {
   SECTIONS,
   parseConfig,
@@ -26,11 +32,13 @@ export default function App() {
   const [pct, setPct] = useState(50);
   const [seeking, setSeeking] = useState(false);
   const [raw, setRaw] = useState("");
+  const [position, setPosition] = useState<Position | null>(null);
 
   // Wire client callbacks once.
   useEffect(() => {
     client.onStatus = setStatus;
     client.onLog = (e) => setLog((prev) => [...prev.slice(-299), e]);
+    client.onPosition = setPosition;
   }, [client]);
 
   const refreshConfig = useCallback(async () => {
@@ -52,15 +60,18 @@ export default function App() {
     client.disconnect();
   }, [client]);
 
-  // On connect, pull config.
+  // On connect, pull config and the current position.
   useEffect(() => {
-    if (status === "connected") void refreshConfig();
-  }, [status, refreshConfig]);
+    if (status !== "connected") return;
+    void refreshConfig();
+    client.send("pos").catch(() => {});
+  }, [status, refreshConfig, client]);
 
   // ── Motion ────────────────────────────────────────────────────────────
   const stop = useCallback(() => {
     client.stop();
     setMoving(null);
+    setSeeking(false);
   }, [client]);
 
   const move = useCallback(
@@ -81,12 +92,16 @@ export default function App() {
     client
       .send("home", 40000)
       .catch(() => {})
-      .finally(() => setHoming(false));
+      .finally(() => {
+        setHoming(false);
+        client.send("pos").catch(() => {}); // refresh position at the new zero
+      });
   }, [client, homing]);
 
   // Go to a position as % of full travel, at the RPM from the Motion panel.
-  // Fire-and-forget on the device (the move runs in the control task), so this
-  // returns promptly and Stop can interrupt it.
+  // Fire-and-forget on the device (the move runs in the control task), so the
+  // command returns promptly. `seeking` stays set until the position poll below
+  // sees the controller go idle; a rejected command clears it right away.
   const gotoPct = useCallback(() => {
     if (!client.isOpen() || seeking || homing) return;
     const p = Math.max(0, Math.min(100, Math.round(pct)));
@@ -94,9 +109,47 @@ export default function App() {
     setSeeking(true);
     client
       .send(`gotopct ${p} ${r}`)
-      .catch(() => {})
-      .finally(() => setSeeking(false));
+      .then((resp) => {
+        if (/rejected/i.test(resp)) setSeeking(false);
+      })
+      .catch(() => setSeeking(false));
   }, [client, pct, rpm, seeking, homing]);
+
+  // While seeking a position, poll `pos` until the controller reports it's no
+  // longer moving. Each reply also refreshes the live readout via onPosition.
+  useEffect(() => {
+    if (status !== "connected" || !seeking) return;
+
+    let cancelled = false;
+    let idleReads = 0;
+    const startedAt = Date.now();
+
+    const id = setInterval(async () => {
+      try {
+        const text = await client.send("pos");
+        if (cancelled) return;
+        const p = parsePosition(text);
+        if (!p) return;
+        if (p.moving) {
+          idleReads = 0;
+          return;
+        }
+        // Ignore the brief window before the move registers, then require two
+        // idle reads so a mid-move sample dip doesn't end the seek early.
+        idleReads += 1;
+        if (Date.now() - startedAt > 500 && idleReads >= 2) setSeeking(false);
+      } catch {
+        /* logged by client */
+      }
+    }, 350);
+
+    const backstop = setTimeout(() => setSeeking(false), 90000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      clearTimeout(backstop);
+    };
+  }, [client, seeking, status]);
 
   // Keyboard hold-to-move. The pressed set guards against keydown auto-repeat.
   useEffect(() => {
@@ -192,6 +245,15 @@ export default function App() {
 
   const connected = status === "connected";
 
+  // % of full travel, using the in-form hard-stop value (edited or live).
+  const hardStop = Number(
+    edits["motion.hard_stop_mm"] ?? live["motion.hard_stop_mm"] ?? 0,
+  );
+  const posPct =
+    position && position.valid && hardStop > 0
+      ? Math.round(Math.min(100, Math.max(0, (position.mm / hardStop) * 100)))
+      : null;
+
   return (
     <div className="app">
       <header>
@@ -282,6 +344,22 @@ export default function App() {
               {seeking ? "Going…" : "Go"}
             </button>
           </div>
+          <div className={`position ${position?.moving ? "moving" : ""}`}>
+            <span className="plabel">Position</span>
+            {position && position.valid ? (
+              <span className="pval">
+                {position.mm.toFixed(1)} mm
+                {posPct !== null && <span className="ppct">{posPct}%</span>}
+                <span className="pstate">
+                  {position.moving ? "moving…" : "stopped"}
+                </span>
+              </span>
+            ) : (
+              <span className="pval muted">
+                {position ? "not homed — run Home" : "—"}
+              </span>
+            )}
+          </div>
           <p className="hint">
             Hold <kbd>↑</kbd>/<kbd>W</kbd> to raise, <kbd>↓</kbd>/<kbd>S</kbd> to lower. Release
             to stop. Buttons work with mouse/touch too. <strong>Home</strong> drives both up to
@@ -313,6 +391,7 @@ export default function App() {
                         live={live}
                         edits={edits}
                         connected={connected}
+                        position={position}
                         onEdit={setEdit}
                       />
                     ))}
@@ -332,6 +411,7 @@ export default function App() {
                           live={live}
                           edits={edits}
                           connected={connected}
+                          position={position}
                           onEdit={setEdit}
                         />
                       ))}
@@ -385,30 +465,57 @@ function Field({
   live,
   edits,
   connected,
+  position,
   onEdit,
 }: {
   field: ConfigField;
   live: ConfigValues;
   edits: ConfigValues;
   connected: boolean;
+  position: Position | null;
   onEdit: (key: string, value: string) => void;
 }) {
   const liveVal = live[field.key] ?? "";
   const editVal = edits[field.key] ?? liveVal;
   const dirty = field.editable && editVal !== liveVal;
 
+  // "Set to current position" is only meaningful with a valid (homed) reading.
+  const canCapture = Boolean(
+    field.setFromPosition && connected && position?.valid,
+  );
+
   return (
     <label className={`field ${dirty ? "dirty" : ""}`}>
       <span className="fkey">{field.label}</span>
       <span className="fdesc">{field.description}</span>
-      <input
-        type={field.kind === "number" ? "number" : "text"}
-        step="any"
-        value={editVal}
-        readOnly={!field.editable}
-        disabled={!connected || !field.editable}
-        onChange={(e) => onEdit(field.key, e.target.value)}
-      />
+      <div className="fcontrol">
+        <input
+          type={field.kind === "number" ? "number" : "text"}
+          step="any"
+          value={editVal}
+          readOnly={!field.editable}
+          disabled={!connected || !field.editable}
+          onChange={(e) => onEdit(field.key, e.target.value)}
+        />
+        {field.setFromPosition && (
+          <button
+            type="button"
+            className="capture"
+            disabled={!canCapture}
+            title={
+              canCapture
+                ? "Record the current measured position into this field"
+                : "Home the blind first to get a valid position"
+            }
+            onClick={(e) => {
+              e.preventDefault();
+              if (position) onEdit(field.key, position.mm.toFixed(1));
+            }}
+          >
+            ⤓ Use current
+          </button>
+        )}
+      </div>
     </label>
   );
 }

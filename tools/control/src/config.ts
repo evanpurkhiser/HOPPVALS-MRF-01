@@ -10,6 +10,10 @@ export interface ConfigField {
   kind: "number" | "string";
   // One-line explanation shown under the label.
   description: string;
+  // When true, the field holds an absolute position in mm (below the homed
+  // top), so the form offers a button to capture the current measured position
+  // into it — drive the blind to the limit, then click to record it.
+  setFromPosition?: boolean;
 }
 
 // A group of fields. Top-level sections may either hold fields directly or be
@@ -49,6 +53,7 @@ export const SECTIONS: ConfigSection[] = [
         label: "Hard stop (mm)",
         editable: true,
         kind: "number",
+        setFromPosition: true,
         description: "Full downward travel from the top, in mm. 'Go to 100%' maps to this, and downward motion never passes it.",
       },
       {
@@ -56,6 +61,7 @@ export const SECTIONS: ConfigSection[] = [
         label: "Soft stop (mm)",
         editable: true,
         kind: "number",
+        setFromPosition: true,
         description:
           "Optional down limit for a blind with an obstruction below — downward motion stops here instead of the hard stop. 0 = unset.",
       },
