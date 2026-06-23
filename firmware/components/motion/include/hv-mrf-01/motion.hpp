@@ -6,7 +6,7 @@
 //
 // Architecture: a 100 Hz FreeRTOS task samples both encoders, computes
 // per-motor measured RPM, runs an independent PI+feedforward speed loop
-// per motor, and drives the motor PWM via `hvmrf01::motor::raw::drive`.
+// per motor, and drives the motor PWM via `hvmrf01::motor::drive`.
 //
 // Cross-coupled sync: each motor's RPM setpoint is biased by K_SYNC ×
 // (count_other - count_me). The lagging motor speeds up and the leading
@@ -106,8 +106,11 @@ struct PositionMm
 };
 PositionMm position_mm();
 
-// Start the 100 Hz control task. Call once from app_main, after motor and
-// encoder are up.
+// Start the 100 Hz control task and register the ZCL cover command handlers
+// (open/close/stop/go-to) with the zigbee component — the controller owns the
+// cover semantics. Call once from app_main, after motor and encoder are up and
+// before zigbee::start(), so the handlers are in place before any command can
+// arrive.
 void start();
 
 }  // namespace hvmrf01::motion

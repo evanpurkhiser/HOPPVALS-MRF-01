@@ -2,8 +2,12 @@
 
 #include <cstdint>
 
+#include "hv-mrf-01/types.hpp"
+
 // Motor driver. Owns the two DRV8876 control pins for both Motor L (left)
-// and Motor R (right) and exposes cover semantics to the Zigbee component.
+// and Motor R (right) and exposes the drive() and debug surfaces. The
+// closed-loop cover semantics (open/close/stop/go-to) live in the motion
+// component, which routes ZCL cover commands onto this driver.
 //
 // The drivers run in PH/EN mode (PMODE strapped to GND on the PCB):
 //   - PH  (direction): high = forward, low = reverse.
@@ -15,22 +19,15 @@
 //                      which is fine: the two cords must move in lockstep, so
 //                      there's never a reason to coast just one.
 //
-// v1 behavior (closed-loop): cover commands forward to the motion
-// controller, which drives both motors via the `raw` sub-namespace below.
-//   - Cover Open  → motion::set_target(40, Direction::Raise)
-//   - Cover Close → motion::set_target(40, Direction::Lower)
-//   - Cover Stop  → motion::stop()
-//   - GoToPercent → not implemented yet; returns Failure.
-
 namespace hvmrf01::motor {
 
-// Which physical motor — left or right side of the blind. Cover commands
-// always drive both in lockstep; the debug + raw surfaces let you target one.
-enum class Side : std::uint8_t { Left, Right, Both };
+// Re-export the shared side enum so callers can keep using motor::Side; the
+// canonical definition lives in hvmrf01::types (hv-mrf-01/types.hpp) so the
+// sensor components don't have to depend on this driver just for the type.
+using Side = hvmrf01::Side;
 
-// Configure GPIO + LEDC for both motors, enable the drivers (nSLEEP high,
-// landing in brake), and register cover handlers with the zigbee component.
-// Call once from app_main, before zigbee::start().
+// Configure GPIO + LEDC for both motors and enable the drivers (nSLEEP high,
+// landing in brake). Call once from app_main.
 void start();
 
 // Put both drivers to sleep (nSLEEP low): outputs go Hi-Z and the motors
@@ -39,29 +36,26 @@ void start();
 // an OTA write + reboot.
 void disable();
 
-// ── Raw drive surface ────────────────────────────────────────────────────
-// The closed-loop motion controller calls these every tick. They behave
-// like the debug surface (no auto-stop, no state machine), but skip the
-// "cancel auto-stop" courtesy that the debug surface adds — the motion
-// controller never engages it. Duty values are clamped 0..100.
-namespace raw {
+// H-bridge output mode for drive(). Forward/Reverse are directions; Brake and
+// Coast are stop modes — hence "mode" rather than "direction".
+enum class Mode : std::uint8_t { Forward, Reverse, Brake, Coast };
 
-enum class Direction : std::uint8_t { Forward, Reverse, Brake, Coast };
-
-// Apply direction + duty atomically for one motor (or both).
+// The primary programmatic drive surface — the motion controller calls this
+// every tick. Applies mode + duty atomically for one motor (or both):
 //   Forward/Reverse — wake the drivers (nSLEEP high), set PH, PWM EN.
 //   Brake           — wake the drivers, EN=0 (low-side short, active hold).
 //   Coast           — nSLEEP low. Affects BOTH motors regardless of `s`.
-void drive(Side s, Direction d, int duty_pct);
+// Duty values are clamped 0..100. No state machine, no auto-stop: whatever you
+// set stays set until changed again.
+void drive(Side s, Mode m, int duty_pct);
 
-}  // namespace raw
-
-// Raw control surface for the serial console. Bypasses cover semantics:
-// no auto-stop timer, no state machine. Whatever you set stays set until
-// changed again. Use for PWM tuning / whine debugging / brake validation.
+// Interactive bench surface for the serial console — the same drive primitives
+// decomposed into independent setters (set direction without touching duty,
+// tweak the PWM frequency, read state back) for hands-on PWM tuning, whine
+// debugging, and brake validation.
 //
-// Note: these fight the motion controller if it's running. Use `motion
-// stop` from the CLI first, or expect tug-of-war.
+// Note: these fight the motion controller if it's running. Use `motion stop`
+// from the CLI first, or expect tug-of-war.
 namespace debug {
 
 void set_forward(Side s = Side::Both);   // PH=H, EN=duty — drive at current duty

@@ -9,10 +9,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
-#include "hv-mrf-01/config.hpp"
-#include "hv-mrf-01/motion.hpp"
-#include "hv-mrf-01/zigbee.hpp"
-
 namespace hvmrf01::motor {
 
 namespace {
@@ -121,59 +117,6 @@ void each(Side s, Fn&& fn)
     if (s == Side::Right || s == Side::Both) fn(MOTOR_R);
 }
 
-// ── Cover command handlers (called by zigbee task) ────────────────────────
-//
-// Route to the motion controller — it owns motor state from here on out.
-// Open/close speed comes from config (config::Motion::cover_rpm), re-fittable
-// at runtime; the motion task reads the same value for its loop.
-zigbee::CommandStatus handle_open()
-{
-    const int rpm = config::get().motion.cover_rpm;
-    ESP_LOGI(TAG, "open → motion raise @ %d RPM", rpm);
-    motion::set_target(rpm, motion::Direction::Raise);
-    return zigbee::CommandStatus::Success;
-}
-
-zigbee::CommandStatus handle_close()
-{
-    const int rpm = config::get().motion.cover_rpm;
-    ESP_LOGI(TAG, "close → motion lower @ %d RPM", rpm);
-    motion::set_target(rpm, motion::Direction::Lower);
-    return zigbee::CommandStatus::Success;
-}
-
-zigbee::CommandStatus handle_stop()
-{
-    ESP_LOGI(TAG, "stop → motion stop");
-    motion::stop();
-    return zigbee::CommandStatus::Success;
-}
-
-zigbee::CommandStatus handle_go_to(std::uint8_t pct)
-{
-    // ZCL lift percentage: 0% = fully open (top), 100% = fully closed (bottom),
-    // which matches go_to_pct's 0 = top / 100 = hard stop. Non-blocking start —
-    // blocking the Zigbee callback for the whole move would stall the stack.
-    if (!motion::begin_go_to_pct(static_cast<float>(pct))) {
-        ESP_LOGW(TAG, "go-to %u%% rejected (not homed / mm_per_rev unset)", pct);
-        return zigbee::CommandStatus::Failure;
-    }
-
-    // Report where it will actually end: a soft stop caps downward travel, so a
-    // command past it ends at the soft-stop percentage, not the commanded one.
-    const auto&  m        = config::get().motion;
-    std::uint8_t reported = pct;
-    if (m.hard_stop_mm > 0.0f && m.soft_stop_mm > 0.0f && m.soft_stop_mm < m.hard_stop_mm) {
-        const auto cap = static_cast<std::uint8_t>(m.soft_stop_mm / m.hard_stop_mm * 100.0f);
-        if (reported > cap) {
-            reported = cap;
-        }
-    }
-    ESP_LOGI(TAG, "go-to %u%% -> move started (reporting %u%%)", pct, reported);
-    zigbee::report_position(reported);
-    return zigbee::CommandStatus::Success;
-}
-
 // ── Hardware init ─────────────────────────────────────────────────────────
 
 void configure_gpio()
@@ -240,13 +183,6 @@ void start()
     // motors never see "awake + undefined EN" (which would drive them).
     set_sleep(true);
 
-    zigbee::register_cover_handlers({
-        .open          = &handle_open,
-        .close         = &handle_close,
-        .stop          = &handle_stop,
-        .go_to_percent = &handle_go_to,
-    });
-
     ESP_LOGI(TAG, "motors wired: L=(EN=%d PH=%d) R=(EN=%d PH=%d) nSLEEP=%d (enabled)",
              MOTOR_L.en, MOTOR_L.ph, MOTOR_R.en, MOTOR_R.ph, MOTOR_SLEEP);
 }
@@ -260,25 +196,21 @@ void disable()
     ESP_LOGI(TAG, "motor drivers disabled (nSLEEP low)");
 }
 
-namespace raw {
-
-void drive(Side s, Direction d, int duty_pct)
+void drive(Side s, Mode mode, int duty_pct)
 {
-    if (d == Direction::Coast) {
+    if (mode == Mode::Coast) {
         coast_stop();
         return;
     }
-    each(s, [d, duty_pct](const Motor& m) {
-        switch (d) {
-        case Direction::Forward: drive_forward(m, duty_pct); break;
-        case Direction::Reverse: drive_reverse(m, duty_pct); break;
-        case Direction::Brake:   brake_stop(m);              break;
-        case Direction::Coast:   break;  // handled above
+    each(s, [mode, duty_pct](const Motor& m) {
+        switch (mode) {
+        case Mode::Forward: drive_forward(m, duty_pct); break;
+        case Mode::Reverse: drive_reverse(m, duty_pct); break;
+        case Mode::Brake:   brake_stop(m);              break;
+        case Mode::Coast:   break;  // handled above
         }
     });
 }
-
-}  // namespace raw
 
 namespace debug {
 

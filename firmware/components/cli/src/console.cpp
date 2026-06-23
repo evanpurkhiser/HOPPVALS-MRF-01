@@ -807,8 +807,8 @@ int cmd_pos(int, char**)
 //   profile <up|down> <duty 0-100> <rotations> [hz=50] [max_s=25]
 int cmd_profile(int argc, char** argv)
 {
+    using hvmrf01::motor::Mode;
     using hvmrf01::motor::Side;
-    using hvmrf01::motor::raw::Direction;
 
     if (argc < 4) {
         emit("usage: profile <up|down> <duty 0-100> <rotations> [hz=50] [max_s=25]\n");
@@ -822,8 +822,8 @@ int cmd_profile(int argc, char** argv)
         emit("direction must be up|down\n");
         return 1;
     }
-    // up = raise = raw Forward; down = lower = raw Reverse (matches motion).
-    const Direction raw_dir = up ? Direction::Forward : Direction::Reverse;
+    // up = raise = Forward; down = lower = Reverse (matches motion).
+    const Mode drive_mode = up ? Mode::Forward : Mode::Reverse;
 
     const int duty = std::atoi(argv[2]);
     if (duty < 0 || duty > 100) {
@@ -864,15 +864,15 @@ int cmd_profile(int argc, char** argv)
         const std::int32_t cr = hvmrf01::encoder::count(Side::Right);
 
         if (!done_l && std::abs(cl) >= target) {
-            hvmrf01::motor::raw::drive(Side::Left, Direction::Brake, 0);
+            hvmrf01::motor::drive(Side::Left, Mode::Brake, 0);
             done_l = true;
         }
         if (!done_r && std::abs(cr) >= target) {
-            hvmrf01::motor::raw::drive(Side::Right, Direction::Brake, 0);
+            hvmrf01::motor::drive(Side::Right, Mode::Brake, 0);
             done_r = true;
         }
-        if (!done_l) hvmrf01::motor::raw::drive(Side::Left, raw_dir, duty);
-        if (!done_r) hvmrf01::motor::raw::drive(Side::Right, raw_dir, duty);
+        if (!done_l) hvmrf01::motor::drive(Side::Left, drive_mode, duty);
+        if (!done_r) hvmrf01::motor::drive(Side::Right, drive_mode, duty);
 
         const auto t_ms = pdTICKS_TO_MS(xTaskGetTickCount() - t0);
         emit("%lu,%ld,%ld,%ld,%ld\n",

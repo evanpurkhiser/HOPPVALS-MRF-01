@@ -3,20 +3,16 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <utility>
 
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_err.h"
-#include "esp_event.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 namespace hvmrf01::current_sense {
-
-ESP_EVENT_DEFINE_BASE(EVENTS);
 
 namespace {
 
@@ -45,24 +41,17 @@ constexpr std::int32_t mv_to_ma(int mv)
 struct Channel
 {
     adc_channel_t chan;
-    Event         overcurrent;
     const char*   label;
 };
 
-constexpr Channel CH_L{ ADC_CHANNEL_1, Event::OvercurrentL, "L" };
-constexpr Channel CH_R{ ADC_CHANNEL_0, Event::OvercurrentR, "R" };
+constexpr Channel CH_L{ ADC_CHANNEL_1, "L" };
+constexpr Channel CH_R{ ADC_CHANNEL_0, "R" };
 constexpr std::array<Channel, 2> CHANNELS{ CH_L, CH_R };  // [0]=L, [1]=R
 
 constexpr std::size_t idx(Side s) { return s == Side::Right ? 1 : 0; }
 
-// ── Overcurrent fault ──────────────────────────────────────────────────────
-// The DRV8876 chops in hardware at ~2.95 A; we flag a sustained draw just
-// below that so firmware reacts before (or as) the chip regulates. Posted
-// once per crossing into the fault region — re-arms when current drops back.
-constexpr std::int32_t OVERCURRENT_MA    = 2800;
-constexpr int          SAMPLE_HZ         = 100;
-constexpr int          OVERCURRENT_TICKS = 50 / (1000 / SAMPLE_HZ);  // ~50 ms
-constexpr TickType_t   SAMPLE_PERIOD     = pdMS_TO_TICKS(1000 / SAMPLE_HZ);
+constexpr int        SAMPLE_HZ     = 100;
+constexpr TickType_t SAMPLE_PERIOD = pdMS_TO_TICKS(1000 / SAMPLE_HZ);
 
 constexpr UBaseType_t   TASK_PRIO = 6;
 constexpr std::uint32_t STACK_SZ  = 3072;
@@ -74,11 +63,6 @@ std::array<adc_cali_handle_t, 2> cali{ nullptr, nullptr };
 std::array<std::atomic<std::int32_t>, 2> latest_mv{};
 std::array<std::atomic<std::int32_t>, 2> latest_ma{};
 
-// Per-motor overcurrent debounce: consecutive over-threshold samples and a
-// latch so we post the event only on the rising edge.
-std::array<int, 2>  over_ticks{ 0, 0 };
-std::array<bool, 2> over_latched{ false, false };
-
 int read_mv(std::size_t i)
 {
     int raw = 0;
@@ -88,24 +72,6 @@ int read_mv(std::size_t i)
     int mv = 0;
     adc_cali_raw_to_voltage(cali[i], raw, &mv);
     return mv;
-}
-
-void check_overcurrent(std::size_t i, std::int32_t ma)
-{
-    if (ma < OVERCURRENT_MA) {
-        over_ticks[i]   = 0;
-        over_latched[i] = false;
-        return;
-    }
-    if (over_latched[i]) {
-        return;
-    }
-    if (++over_ticks[i] >= OVERCURRENT_TICKS) {
-        over_latched[i] = true;
-        ESP_LOGW(TAG, "overcurrent %s: %ld mA", CHANNELS[i].label, static_cast<long>(ma));
-        const auto ev = std::to_underlying(CHANNELS[i].overcurrent);
-        esp_event_post(EVENTS, ev, nullptr, 0, 0);
-    }
 }
 
 void sample_task(void*)
@@ -119,7 +85,6 @@ void sample_task(void*)
             const std::int32_t ma = mv_to_ma(mv);
             latest_mv[i].store(mv);
             latest_ma[i].store(ma);
-            check_overcurrent(i, ma);
         }
     }
 }

@@ -2,9 +2,7 @@
 
 #include <cstdint>
 
-#include "esp_event.h"
-
-#include "hv-mrf-01/motor.hpp"
+#include "hv-mrf-01/types.hpp"
 
 // Motor current sensing via the DRV8876 IPROPI pins. Each driver mirrors its
 // output current onto IPROPI, which the PCB turns into a voltage across a
@@ -21,19 +19,8 @@
 
 namespace hvmrf01::current_sense {
 
-// Reuse the motor::Side enum so callers address either motor uniformly.
-using Side = hvmrf01::motor::Side;
-
-// Overcurrent notifications, posted when a motor's current stays above the
-// fault threshold for the debounce window. Fire-and-forget; subscribe via
-// esp_event_handler_register on this base.
-ESP_EVENT_DECLARE_BASE(EVENTS);
-
-enum class Event : std::int32_t
-{
-    OvercurrentL, // no data
-    OvercurrentR, // no data
-};
+// Reuse the shared Side enum so callers address either motor uniformly.
+using Side = hvmrf01::Side;
 
 // Configure ADC1 + calibration and start the 100 Hz sampling task. Call once
 // from app_main.

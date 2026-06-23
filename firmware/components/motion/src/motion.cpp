@@ -13,6 +13,7 @@
 #include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/encoder.hpp"
 #include "hv-mrf-01/motor.hpp"
+#include "hv-mrf-01/zigbee.hpp"
 
 namespace hvmrf01::motion {
 
@@ -88,24 +89,24 @@ float measured_rpm(std::int32_t delta_counts)
     return (counts_per_sec / static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV)) * 60.0f;
 }
 
-motor::raw::Direction to_raw(Direction d)
+motor::Mode to_mode(Direction d)
 {
-    // As-built PCB wiring: motor::raw::Forward spins the motors in the
+    // As-built PCB wiring: motor::Mode::Forward spins the motors in the
     // physical "wind cord up" direction (raise the blind), so Raise maps to
-    // Forward. Raw forward produces *negative* encoder counts on both
-    // motors; dir_sign below flips the PI's idea of "positive motion" to
-    // match. (The breadboard prototype had this reversed.)
+    // Forward. Forward produces *negative* encoder counts on both motors;
+    // dir_sign below flips the PI's idea of "positive motion" to match. (The
+    // breadboard prototype had this reversed.)
     switch (d) {
-    case Direction::Raise: return motor::raw::Direction::Forward;
-    case Direction::Lower: return motor::raw::Direction::Reverse;
-    case Direction::Stop:  return motor::raw::Direction::Brake;
+    case Direction::Raise: return motor::Mode::Forward;
+    case Direction::Lower: return motor::Mode::Reverse;
+    case Direction::Stop:  return motor::Mode::Brake;
     }
-    return motor::raw::Direction::Brake;
+    return motor::Mode::Brake;
 }
 
 void brake_both()
 {
-    motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+    motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
 }
 
 void reset_integrators()
@@ -138,7 +139,7 @@ std::int32_t down_limit_counts(const config::Motion& m)
 // produce positive count delta; under Lower, negative. We pass the
 // "expected sign of count motion" into the loop so the same code handles
 // both directions. The PI controller operates on magnitudes (always
-// non-negative); the H-bridge handles direction via to_raw().
+// non-negative); the H-bridge handles direction via to_mode().
 void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
 {
     // Read both encoders up front so cross-coupling sees consistent values.
@@ -146,8 +147,8 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
     const std::int32_t count_r = encoder::count(motor::Side::Right);
 
     // Stop / zero-setpoint: idle state. Don't continuously re-apply brake
-    // (that would fight raw debug / motor::raw drives) and don't run the
-    // sync watchdog (raw drives can legitimately diverge the encoders).
+    // (that would fight the motor::debug bench drives) and don't run the
+    // sync watchdog (manual drives can legitimately diverge the encoders).
     // Transition into stopped is handled by stop() and the on-fault path.
     if (dir == Direction::Stop || base_setpoint_rpm <= 0) {
         reset_integrators();
@@ -234,8 +235,8 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
     // Sign of expected count motion per direction. Used to flip the
     // measured-RPM and sync-bias terms so the PI sees them in the
     // commanded reference frame (always "positive = on target").
-    // Raise drives raw::Forward (counts go negative), Lower drives
-    // raw::Reverse (counts go positive). dir_sign projects measured RPM
+    // Raise drives Mode::Forward (counts go negative), Lower drives
+    // Mode::Reverse (counts go positive). dir_sign projects measured RPM
     // and sync bias into the commanded reference frame ("positive = on
     // target") regardless of encoder count direction.
     const float dir_sign = (dir == Direction::Raise) ? -1.0f : 1.0f;
@@ -275,7 +276,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
         float duty          = ff_duty + m.kp * error + m.ki * c.i_accum;
         duty                = std::clamp(duty, 0.0f, 100.0f);
 
-        motor::raw::drive(c.side, to_raw(dir), static_cast<int>(duty));
+        motor::drive(c.side, to_mode(dir), static_cast<int>(duty));
     }
 }
 
@@ -303,7 +304,7 @@ void run_position_tick(const config::Motion& m)
     const std::int32_t slow_counts = mm_to_counts(m, m.goto_slow_mm, 896);
 
     if (std::abs(err) <= tol_counts) {
-        motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+        motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
         reset_integrators();
         position_mode.store(false);
         arrived.store(true);
@@ -374,6 +375,62 @@ void control_task(void*)
     }
 }
 
+// ── Cover command handlers (registered with the zigbee component) ──────────
+//
+// The ZCL Window Covering cluster routes here. The controller owns motor state,
+// so the cover semantics (open = raise, close = lower, go-to = position seek)
+// live with it rather than in the low-level motor driver — which is why the
+// motor component no longer needs to know about zigbee or motion. Open/close
+// speed comes from config::Motion::cover_rpm, re-fittable at runtime. These run
+// in the zigbee task context, so they kick off motion and return immediately.
+zigbee::CommandStatus handle_open()
+{
+    const int rpm = config::get().motion.cover_rpm;
+    ESP_LOGI(TAG, "open → raise @ %d RPM", rpm);
+    set_target(rpm, Direction::Raise);
+    return zigbee::CommandStatus::Success;
+}
+
+zigbee::CommandStatus handle_close()
+{
+    const int rpm = config::get().motion.cover_rpm;
+    ESP_LOGI(TAG, "close → lower @ %d RPM", rpm);
+    set_target(rpm, Direction::Lower);
+    return zigbee::CommandStatus::Success;
+}
+
+zigbee::CommandStatus handle_stop()
+{
+    ESP_LOGI(TAG, "stop");
+    stop();
+    return zigbee::CommandStatus::Success;
+}
+
+zigbee::CommandStatus handle_go_to(std::uint8_t pct)
+{
+    // ZCL lift percentage: 0% = fully open (top), 100% = fully closed (bottom),
+    // which matches go_to_pct's 0 = top / 100 = hard stop. Non-blocking start —
+    // blocking the Zigbee callback for the whole move would stall the stack.
+    if (!begin_go_to_pct(static_cast<float>(pct))) {
+        ESP_LOGW(TAG, "go-to %u%% rejected (not homed / mm_per_rev unset)", pct);
+        return zigbee::CommandStatus::Failure;
+    }
+
+    // Report where it will actually end: a soft stop caps downward travel, so a
+    // command past it ends at the soft-stop percentage, not the commanded one.
+    const auto&  m        = config::get().motion;
+    std::uint8_t reported = pct;
+    if (m.hard_stop_mm > 0.0f && m.soft_stop_mm > 0.0f && m.soft_stop_mm < m.hard_stop_mm) {
+        const auto cap = static_cast<std::uint8_t>(m.soft_stop_mm / m.hard_stop_mm * 100.0f);
+        if (reported > cap) {
+            reported = cap;
+        }
+    }
+    ESP_LOGI(TAG, "go-to %u%% -> move started (reporting %u%%)", pct, reported);
+    zigbee::report_position(reported);
+    return zigbee::CommandStatus::Success;
+}
+
 }  // namespace
 
 void set_target(int rpm, Direction d)
@@ -400,7 +457,7 @@ void stop()
     // The control task picks up the new state on the next tick; brake
     // immediately here so the motors don't keep coasting through that
     // (≤10 ms) window.
-    motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+    motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
 }
 
 HomeResult home()
@@ -451,7 +508,7 @@ HomeResult home()
 
             if (std::abs(delta) <= stopped_max) {
                 if (++m.stopped >= settle_ticks) {
-                    motor::raw::drive(m.side, motor::raw::Direction::Brake, 0);
+                    motor::drive(m.side, motor::Mode::Brake, 0);
                     encoder::reset(m.side);
                     m.done = true;
                     ESP_LOGI(TAG, "homing: %s settled at top", m.label);
@@ -461,7 +518,7 @@ HomeResult home()
                 m.stopped = 0;
             }
 
-            motor::raw::drive(m.side, to_raw(Direction::Raise), duty);
+            motor::drive(m.side, to_mode(Direction::Raise), duty);
         }
 
         if (all_done) {
@@ -470,7 +527,7 @@ HomeResult home()
     }
 
     // Brake both and hand the motors back to the (idle) control task.
-    motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+    motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
     reset_integrators();
     homing.store(false);
 
@@ -570,7 +627,7 @@ GoToResult go_to_mm(float mm, int rpm)
 
     // Ensure we're stopped and the control task is out of position mode.
     position_mode.store(false);
-    motor::raw::drive(motor::Side::Both, motor::raw::Direction::Brake, 0);
+    motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
 
     const GoToStatus st = arrived.load() ? GoToStatus::Arrived
                         : fault.load()   ? GoToStatus::Faulted
@@ -583,6 +640,16 @@ GoToResult go_to_mm(float mm, int rpm)
 
 void start()
 {
+    // Route ZCL cover commands onto the controller. Registered before
+    // zigbee::start() (called later in app_main), so no command can arrive
+    // before the handlers are in place.
+    zigbee::register_cover_handlers({
+        .open          = &handle_open,
+        .close         = &handle_close,
+        .stop          = &handle_stop,
+        .go_to_percent = &handle_go_to,
+    });
+
     BaseType_t ok = xTaskCreate(&control_task, "motion", STACK_SZ,
                                 nullptr, TASK_PRIO, nullptr);
     configASSERT(ok == pdPASS);

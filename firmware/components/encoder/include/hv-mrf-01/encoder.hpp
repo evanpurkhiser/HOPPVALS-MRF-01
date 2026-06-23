@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "hv-mrf-01/motor.hpp"
+#include "hv-mrf-01/types.hpp"
 
 // Quadrature encoder reader using the ESP32-C6 PCNT (Pulse Counter)
 // peripheral. PCNT decodes A+B in hardware with no CPU cost — we just
@@ -20,8 +20,8 @@ namespace hvmrf01::encoder {
 //   encoder PPR (7) × quadrature multiplier (4) × gearbox ratio (32) = 896
 constexpr std::int32_t COUNTS_PER_OUTPUT_REV = 896;
 
-// Reuse the motor::Side enum so callers can address either motor uniformly.
-using Side = hvmrf01::motor::Side;
+// Reuse the shared Side enum so callers can address either motor uniformly.
+using Side = hvmrf01::Side;
 
 // Initialize PCNT for both motors. Call once from app_main.
 void start();
