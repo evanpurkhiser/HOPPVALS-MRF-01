@@ -20,6 +20,7 @@
 #include "hv-mrf-01/encoder.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
+#include "hv-mrf-01/self_test.hpp"
 
 namespace hvmrf01::console {
 
@@ -707,6 +708,7 @@ int cmd_profile(int argc, char** argv);
 int cmd_goto(int argc, char** argv);
 int cmd_gotopct(int argc, char** argv);
 int cmd_pos(int argc, char** argv);
+int cmd_selftest(int argc, char** argv);
 
 // The full command table, shared by register_commands() and cmd_help().
 const esp_console_cmd_t COMMANDS[] = {
@@ -733,6 +735,7 @@ const esp_console_cmd_t COMMANDS[] = {
         {.command = "gotopct",.help = "Go to a position as % of full travel (clamped to soft stop)", .hint = "<0-100> [rpm]", .func = &cmd_gotopct, .argtable = nullptr},
         {.command = "pos",    .help = "Print current position (mm below the homed top)",   .hint = nullptr, .func = &cmd_pos, .argtable = nullptr},
         {.command = "profile",.help = "Open-loop both-motor drive; stream pos+current CSV", .hint = "<up|down> <duty> <rotations> [hz] [max_s]", .func = &cmd_profile, .argtable = nullptr},
+        {.command = "selftest",.help = "Automated motor/encoder/current self-test (PASS/FAIL)", .hint = "[L|R|both]", .func = &cmd_selftest, .argtable = nullptr},
         {.command = "help",   .help = "List available commands",                           .hint = nullptr, .func = &cmd_help,   .argtable = nullptr},
 };
 
@@ -905,6 +908,26 @@ int cmd_profile(int argc, char** argv)
     hvmrf01::motor::debug::set_brake(Side::Both);
     emit("PROFILE_END samples=%d done_l=%d done_r=%d\n", emitted, done_l, done_r);
     return 0;
+}
+
+// Stream one self-test result as it completes, in the machine-parseable
+// envelope (note already carries side + measured fields, with reason=… on fail).
+void on_selftest_result(const hvmrf01::self_test::Result& r)
+{
+    emit("CHECK %s %s %s\n", r.name.c_str(), r.pass ? "PASS" : "FAIL", r.note.c_str());
+}
+
+// Run the automated motor self-test for one side or both. Delegates to the
+// self_test component; results stream live via on_selftest_result. Returns
+// nonzero if any check failed.
+int cmd_selftest(int argc, char** argv)
+{
+    const auto side = parse_side(argc, argv, 1);
+    emit("SELFTEST_BEGIN side=%s cpr=%ld\n", side_label(side),
+           static_cast<long>(hvmrf01::encoder::COUNTS_PER_OUTPUT_REV));
+    const auto res = hvmrf01::self_test::run(side, &on_selftest_result);
+    emit("SELFTEST_END pass=%d fail=%d\n", res.pass_count(), res.fail_count());
+    return res.passed() ? 0 : 1;
 }
 
 void register_commands()
