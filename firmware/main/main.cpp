@@ -85,7 +85,7 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
         ESP_LOGI(TAG, "→ identify effect 0x%02x", effect);
     } break;
     case Event::EnterDebug:
-        reboot_into_debug("Debug Mode switch on");
+        reboot_into_debug("reboot-to-debug command received");
         break;
     }
 }

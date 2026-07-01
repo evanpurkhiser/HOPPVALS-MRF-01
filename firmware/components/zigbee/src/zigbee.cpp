@@ -1,5 +1,7 @@
 #include "hv-mrf-01/zigbee.hpp"
 
+#include "hv-mrf-01/config.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -13,11 +15,12 @@
 #include "nvs_flash.h"
 
 #include "esp_zigbee.h"
+#include "ezbee/af.h"
 #include "ezbee/zha.h"
 #include "ezbee/zcl/cluster/basic_desc.h"
+#include "ezbee/zcl/cluster/custom.h"
 #include "ezbee/zcl/cluster/identify.h"
 #include "ezbee/zcl/cluster/identify_desc.h"
-#include "ezbee/zcl/cluster/on_off_desc.h"
 #include "ezbee/zcl/cluster/window_covering_desc.h"
 
 namespace hvmrf01::zigbee {
@@ -35,16 +38,57 @@ constexpr auto MODEL_IDENTIFIER            = "\x09"
                                              "HV-MRF-01";
 
 constexpr std::uint8_t  EP_WINDOW_COVERING = 10;
-constexpr std::uint8_t  EP_DEBUG_SWITCH    = 11;
 constexpr std::uint32_t PRIMARY_CHANNEL    = 0x07FFF800U; // scan all of ch 11..26
 constexpr std::uint32_t SECONDARY_CHANNELS = 0;           // primary already covers all
 constexpr auto          STORAGE_PARTITION  = "zb_storage";
+
+// Manufacturer-specific "device config" cluster
+//
+// A custom server cluster on the Window Covering endpoint that surfaces the
+// handful of motion settings worth changing from the hub — speed and the two
+// travel limits — plus a command to reboot into the WiFi debug console. The
+// cluster ID lives in the custom range (>= 0x8000); the attributes and command
+// are tagged manufacturer-specific so they don't collide with standard ZCL.
+//
+// Zigbee attributes carry no names over the air, so a matching ZHA quirk (keyed
+// on the Basic-cluster ManufacturerName/ModelIdentifier above) gives these IDs
+// their labels, units, and ranges in Home Assistant. Without the quirk they
+// still work — they just appear as raw attribute IDs in the cluster inspector.
+//
+// 0x131B is Espressif's allocated manufacturer code; reused here since the quirk
+// matches on the name/model strings, so the numeric code only needs to be
+// stable and non-zero.
+constexpr std::uint16_t MANUF_CODE      = EZB_ZCL_ESP_MANUF_CODE;
+constexpr std::uint16_t CLUSTER_CONFIG  = 0xFC00;
+
+constexpr std::uint16_t ATTR_COVER_SPEED  = 0x0000; // uint16, output-shaft RPM
+constexpr std::uint16_t ATTR_SOFT_STOP_MM = 0x0001; // uint16, mm down limit (0 = off)
+constexpr std::uint16_t ATTR_HARD_STOP_MM = 0x0002; // uint16, mm full travel
+
+constexpr std::uint8_t  CMD_REBOOT_DEBUG  = 0x00;   // server-received, no payload
+
+// Accepted speed range, mirrored by the quirk's number entity. mm limits accept
+// any uint16, so motion's own clamping is the only bound there.
+constexpr int COVER_RPM_MIN = 8;
+constexpr int COVER_RPM_MAX = 300;
 
 // Registered cover handlers. Set via register_cover_handlers(). Defaults to
 // all-null; a supported command with no handler set returns Failure, while a
 // command we don't implement returns UnsupportedCommand (see
 // dispatch_cover_command).
 CoverHandlers cover_handlers{};
+
+// Backing store for the config cluster's attribute values. The SDK holds the
+// pointers we hand it at registration, so this must outlive the stack — hence
+// file scope. Seeded from the persisted config when the endpoint is built and
+// kept in sync as writes land.
+struct ConfigAttrValues
+{
+    std::uint16_t cover_speed;
+    std::uint16_t soft_stop_mm;
+    std::uint16_t hard_stop_mm;
+};
+ConfigAttrValues config_attrs{};
 
 // RAII wrapper around the Zigbee stack lock. Acquire on construction, release
 // on scope exit — no manual pairing, no leaks on early return.
@@ -247,24 +291,6 @@ void handle_set_attr(ezb_zcl_set_attr_value_message_t* msg) noexcept
     }
 
     switch (msg->info.cluster_id) {
-    case EZB_ZCL_CLUSTER_ID_ON_OFF:
-        // The "Debug Mode" switch endpoint. Turning it on is the untethered
-        // entry point into WiFi debug mode: post the event and let app_main
-        // arm the one-shot flag and reboot (keeps Zigbee free of that policy).
-        // Gate on the specific endpoint and validate the payload so an On/Off
-        // write to some other future endpoint can't reboot us out of Zigbee.
-        if (msg->info.dst_ep == EP_DEBUG_SWITCH &&
-            msg->in.attribute.id == EZB_ZCL_ATTR_ON_OFF_ON_OFF_ID &&
-            msg->in.attribute.data.value != nullptr &&
-            msg->in.attribute.data.size >= 1) {
-            const bool on = *static_cast<bool*>(msg->in.attribute.data.value);
-            ESP_LOGI(TAG, "Debug Mode switch = %s", on ? "on" : "off");
-            if (on) {
-                post(EnterDebug);
-            }
-        }
-        break;
-
     case EZB_ZCL_CLUSTER_ID_IDENTIFY:
         // HA's "Identify" device action writes the IdentifyTime attribute.
         // The SDK auto-decrements it once per second; any nonzero value here
@@ -292,6 +318,71 @@ void handle_identify_effect(ezb_zcl_identify_effect_message_t* msg) noexcept
     ESP_LOGI(TAG, "Identify effect 0x%02x (variant 0x%02x)", effect_id, msg->in.effect_variant);
     post(Event::Identify, effect_id);
     msg->out.result = EZB_ZCL_STATUS_SUCCESS;
+}
+
+// Config cluster callbacks
+//
+// The stack invokes these for the manufacturer-specific config cluster, keyed
+// by cluster_id at registration. check_value gates a write before it's stored;
+// write_attr fires after a stored write so we can mirror it into persistent
+// config; process_cmd handles the (attribute-less) command requests.
+
+extern "C" ezb_zcl_status_t config_cluster_check_value(std::uint16_t attr_id, std::uint8_t,
+                                                       void* value) noexcept
+{
+    const auto v = *static_cast<std::uint16_t*>(value);
+    if (attr_id == ATTR_COVER_SPEED && (v < COVER_RPM_MIN || v > COVER_RPM_MAX)) {
+        return EZB_ZCL_STATUS_INVALID_VALUE;
+    }
+    return EZB_ZCL_STATUS_SUCCESS;
+}
+
+// Persist a validated config-attribute write. Runs in the Zigbee task from
+// inside the stack's write path, so it must not take the stack lock; config
+// saves are plain NVS writes that don't touch the stack. The motion task picks
+// the change up on its next tick via config::generation(), so speed and limit
+// edits apply live without a reboot.
+extern "C" void config_cluster_write_attr(std::uint8_t, std::uint16_t attr_id, void* new_value,
+                                          std::uint16_t) noexcept
+{
+    const auto v   = *static_cast<std::uint16_t*>(new_value);
+    auto       cfg = config::get();
+
+    switch (attr_id) {
+    case ATTR_COVER_SPEED:
+        cfg.motion.cover_rpm     = v;
+        config_attrs.cover_speed = v;
+        break;
+    case ATTR_SOFT_STOP_MM:
+        cfg.motion.soft_stop_mm   = static_cast<float>(v);
+        config_attrs.soft_stop_mm = v;
+        break;
+    case ATTR_HARD_STOP_MM:
+        cfg.motion.hard_stop_mm   = static_cast<float>(v);
+        config_attrs.hard_stop_mm = v;
+        break;
+    default:
+        return;
+    }
+
+    if (auto r = config::save(cfg); !r) {
+        ESP_LOGW(TAG, "config attr 0x%04x: save failed (err %d)", attr_id,
+                 static_cast<int>(r.error()));
+        return;
+    }
+    ESP_LOGI(TAG, "config attr 0x%04x = %u (persisted)", attr_id, v);
+}
+
+extern "C" ezb_zcl_status_t config_cluster_process_cmd(const ezb_zcl_cmd_hdr_t* hdr,
+                                                       const std::uint8_t*, std::uint16_t) noexcept
+{
+    if (hdr != nullptr && hdr->cmd_id == CMD_REBOOT_DEBUG) {
+        ESP_LOGI(TAG, "Config cmd: reboot into debug mode");
+        post(Event::EnterDebug);
+        return EZB_ZCL_STATUS_SUCCESS;
+    }
+    ESP_LOGW(TAG, "Config cmd: unsupported 0x%02x", hdr ? hdr->cmd_id : 0xFF);
+    return EZB_ZCL_STATUS_UNSUP_CMD;
 }
 
 extern "C" void zcl_action_handler(ezb_zcl_core_action_callback_id_t cb_id, void* msg)
@@ -353,6 +444,52 @@ void stamp_identity(ezb_af_ep_desc_t ep)
     ezb_zcl_basic_cluster_desc_add_attr(basic, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, sw_build_id());
 }
 
+// Attach the manufacturer-specific config cluster to an existing endpoint:
+// seed the attribute values from the persisted config, build the cluster
+// descriptor, and register the handlers that gate/persist writes and process
+// the reboot command. Best-effort — a failure here just means the config
+// cluster is absent; the standard Window Covering control still works.
+void add_config_cluster(ezb_af_ep_desc_t ep)
+{
+    const auto m = config::get().motion;
+    config_attrs = {
+        .cover_speed  = static_cast<std::uint16_t>(m.cover_rpm),
+        .soft_stop_mm = static_cast<std::uint16_t>(m.soft_stop_mm),
+        .hard_stop_mm = static_cast<std::uint16_t>(m.hard_stop_mm),
+    };
+
+    const ezb_zcl_custom_cluster_config_t cfg{
+        .cluster_id  = CLUSTER_CONFIG,
+        .init_func   = nullptr,
+        .deinit_func = nullptr,
+    };
+    auto cluster = ezb_zcl_custom_create_cluster_desc(&cfg, EZB_ZCL_CLUSTER_SERVER);
+    if (cluster == nullptr) {
+        ESP_LOGE(TAG, "config cluster desc alloc failed");
+        return;
+    }
+
+    const auto add = [&](std::uint16_t id, void* val) {
+        ezb_zcl_custom_cluster_desc_add_manuf_attr(cluster, id, EZB_ZCL_ATTR_TYPE_UINT16,
+                                                   EZB_ZCL_ATTR_ACCESS_READ_WRITE, MANUF_CODE, val);
+    };
+    add(ATTR_COVER_SPEED, &config_attrs.cover_speed);
+    add(ATTR_SOFT_STOP_MM, &config_attrs.soft_stop_mm);
+    add(ATTR_HARD_STOP_MM, &config_attrs.hard_stop_mm);
+
+    ESP_ERROR_CHECK(ezb_af_endpoint_add_cluster_desc(ep, cluster));
+
+    static const ezb_zcl_custom_cluster_handlers_t handlers{
+        .cluster_id     = CLUSTER_CONFIG,
+        .cluster_role   = EZB_ZCL_CLUSTER_SERVER,
+        .check_value_cb = config_cluster_check_value,
+        .write_attr_cb  = config_cluster_write_attr,
+        .cmd_disc_cb    = nullptr,
+        .process_cmd_cb = config_cluster_process_cmd,
+    };
+    ESP_ERROR_CHECK(ezb_zcl_custom_cluster_handlers_register(&handlers));
+}
+
 ezb_af_ep_desc_t build_window_covering_endpoint()
 {
     auto cfg = ezb_zha_window_covering_config_t EZB_ZHA_WINDOW_COVERING_CONFIG();
@@ -364,30 +501,22 @@ ezb_af_ep_desc_t build_window_covering_endpoint()
 
     auto ep = ezb_zha_create_window_covering(EP_WINDOW_COVERING, &cfg);
     stamp_identity(ep);
+    add_config_cluster(ep);
     return ep;
-}
-
-// A second endpoint exposing a single On/Off server cluster. ZHA surfaces it as
-// a switch entity ("Debug Mode"); turning it on is the untethered trigger to
-// reboot into WiFi debug mode. See handle_set_attr's ON_OFF case.
-ezb_af_ep_desc_t build_debug_switch_endpoint()
-{
-    auto cfg = ezb_zha_mains_power_outlet_config_t EZB_ZHA_MAINS_POWER_OUTLET_CONFIG();
-    return ezb_zha_create_mains_power_outlet(EP_DEBUG_SWITCH, &cfg);
 }
 
 esp_err_t register_endpoints()
 {
+    // Tag the node descriptor with the manufacturer code so the manufacturer-
+    // specific attributes and command read back consistently on the hub.
+    ezb_af_node_desc_set_manuf_code(MANUF_CODE);
+
     auto dev = ezb_af_create_device_desc();
     ESP_RETURN_ON_FALSE(dev != nullptr, ESP_ERR_NO_MEM, TAG, "device desc failed");
 
     auto wc = build_window_covering_endpoint();
     ESP_RETURN_ON_FALSE(wc != nullptr, ESP_ERR_NO_MEM, TAG, "window covering ep failed");
     ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev, wc));
-
-    auto dbg = build_debug_switch_endpoint();
-    ESP_RETURN_ON_FALSE(dbg != nullptr, ESP_ERR_NO_MEM, TAG, "debug switch ep failed");
-    ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev, dbg));
 
     ESP_ERROR_CHECK(ezb_af_device_desc_register(dev));
     ezb_zcl_core_action_handler_register(zcl_action_handler);
