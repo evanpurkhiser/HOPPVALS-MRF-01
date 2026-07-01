@@ -25,7 +25,13 @@
 
 namespace hvmrf01::zigbee {
 
-ESP_EVENT_DEFINE_BASE(EVENTS);
+// Define the base with an explicit, component-unique string rather than via
+// ESP_EVENT_DEFINE_BASE(EVENTS) — that macro stringizes to "EVENTS", and a
+// second component doing the same gets the identical literal. esp_event matches
+// bases by pointer, and the linker pools identical string literals to one
+// address, so two "EVENTS" bases collide and cross-deliver events. Keep these
+// distinct (see position_report, which had the same name).
+const esp_event_base_t EVENTS = "hvmrf01.zigbee";
 
 namespace {
 

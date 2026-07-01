@@ -12,7 +12,12 @@
 
 namespace hvmrf01::position_report {
 
-ESP_EVENT_DEFINE_BASE(EVENTS);
+// Explicit, component-unique base string — not ESP_EVENT_DEFINE_BASE(EVENTS).
+// Two components stringizing the same "EVENTS" name collide: esp_event matches
+// bases by pointer and the linker pools identical literals, so the bases would
+// share an address and cross-deliver events (a null-data zigbee event landing
+// here used to crash on_position_changed). See the matching note in zigbee.cpp.
+const esp_event_base_t EVENTS = "hvmrf01.posreport";
 
 namespace {
 

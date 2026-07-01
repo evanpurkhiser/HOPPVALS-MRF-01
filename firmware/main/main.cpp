@@ -59,6 +59,9 @@ void enter_debug_recovery(void *)
 // taking the stack lock in report_position is safe here.
 void on_position_changed(void *, esp_event_base_t, std::int32_t, void *data)
 {
+    if (data == nullptr) {
+        return;
+    }
     const auto pct = *static_cast<std::uint8_t *>(data);
     hvmrf01::zigbee::report_position(pct);
 }
