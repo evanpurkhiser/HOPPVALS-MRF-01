@@ -36,8 +36,8 @@ constexpr auto MODEL_IDENTIFIER            = "\x09"
 
 constexpr std::uint8_t  EP_WINDOW_COVERING = 10;
 constexpr std::uint8_t  EP_DEBUG_SWITCH    = 11;
-constexpr std::uint32_t PRIMARY_CHANNEL    = 1U << 13;    // ch 13 first
-constexpr std::uint32_t SECONDARY_CHANNELS = 0x07FFF800U; // ch 11..26
+constexpr std::uint32_t PRIMARY_CHANNEL    = 0x07FFF800U; // scan all of ch 11..26
+constexpr std::uint32_t SECONDARY_CHANNELS = 0;           // primary already covers all
 constexpr auto          STORAGE_PARTITION  = "zb_storage";
 
 // Registered cover handlers. Set via register_cover_handlers(). Defaults to
@@ -82,6 +82,26 @@ extern "C" void alarm_restart_commissioning(std::uint8_t mode)
     static_cast<void>(ezb_bdb_start_top_level_commissioning(mode));
 }
 
+const char* leave_type_name(ezb_zdo_leave_type_t type) noexcept
+{
+    switch (type) {
+    case EZB_ZDO_LEAVE_TYPE_RESET:  return "reset (no rejoin)";
+    case EZB_ZDO_LEAVE_TYPE_REJOIN: return "rejoin";
+    default:                        return "?";
+    }
+}
+
+// Log the current network identity (only meaningful once joined): PAN,
+// extended PAN, channel, and our short address.
+void log_network_info(const char* context) noexcept
+{
+    ezb_extpanid_t extpanid;
+    ezb_nwk_get_extended_panid(&extpanid);
+    ESP_LOGI(TAG, "%s: PAN 0x%04hx (ext 0x%016llx), ch %d, addr 0x%04hx", context,
+             ezb_nwk_get_panid(), extpanid.u64, ezb_nwk_get_current_channel(),
+             ezb_nwk_get_short_address());
+}
+
 extern "C" bool signal_handler(const ezb_app_signal_t* app_signal)
 {
     using enum Event;
@@ -103,8 +123,7 @@ extern "C" bool signal_handler(const ezb_app_signal_t* app_signal)
             if (factory_new) {
                 ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
             } else {
-                ESP_LOGI(TAG, "Rejoining existing network (PAN 0x%04hx, ch %d)",
-                         ezb_nwk_get_panid(), ezb_nwk_get_current_channel());
+                log_network_info("Rejoining existing network");
                 post(JoinedNetwork);
             }
         } else {
@@ -118,11 +137,7 @@ extern "C" bool signal_handler(const ezb_app_signal_t* app_signal)
         const auto status =
             *static_cast<const ezb_bdb_comm_status_t*>(ezb_app_signal_get_params(app_signal));
         if (status == EZB_BDB_STATUS_SUCCESS) {
-            ezb_extpanid_t extpanid;
-            ezb_nwk_get_extended_panid(&extpanid);
-            ESP_LOGI(TAG, "Joined network: PAN 0x%04hx (ext 0x%llx), ch %d, addr 0x%04hx",
-                     ezb_nwk_get_panid(), extpanid.u64, ezb_nwk_get_current_channel(),
-                     ezb_nwk_get_short_address());
+            log_network_info("Joined network");
             post(JoinedNetwork);
         } else {
             ESP_LOGW(TAG, "Network steering failed (0x%02x), retrying in 1s...", status);
@@ -131,14 +146,45 @@ extern "C" bool signal_handler(const ezb_app_signal_t* app_signal)
         }
     } break;
 
-    case EZB_ZDO_SIGNAL_LEAVE:
-        ESP_LOGW(TAG, "Left network, returning to commissioning");
+    case EZB_ZDO_SIGNAL_LEAVE: {
+        const auto* params =
+            static_cast<const ezb_zdo_signal_leave_params_t*>(ezb_app_signal_get_params(app_signal));
+        const auto leave_type = params ? params->leave_type : EZB_ZDO_LEAVE_TYPE_RESET;
+        ESP_LOGW(TAG, "Left network (leave type: %s), returning to commissioning",
+                 leave_type_name(leave_type));
         post(LeftNetwork);
         ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
-        break;
+    } break;
+
+    case EZB_NWK_SIGNAL_NETWORK_STATUS: {
+        const auto* params = static_cast<const ezb_nwk_signal_network_status_params_t*>(
+            ezb_app_signal_get_params(app_signal));
+        if (params != nullptr) {
+            ESP_LOGW(TAG, "Network failure 0x%02x at addr 0x%04hx (unknown cmd 0x%02x)",
+                     params->status, params->network_addr, params->unknown_command_id);
+        }
+    } break;
+
+    case EZB_ZDO_SIGNAL_DEVICE_UNAVAILABLE: {
+        const auto* params = static_cast<const ezb_zdo_signal_device_unavailable_params_t*>(
+            ezb_app_signal_get_params(app_signal));
+        if (params != nullptr) {
+            ESP_LOGW(TAG, "Delivery failed: addr 0x%04hx (ieee 0x%016llx) unreachable",
+                     params->short_addr, params->device_addr.u64);
+        }
+    } break;
+
+    case EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS: {
+        const auto* params = static_cast<const ezb_nwk_signal_permit_join_status_params_t*>(
+            ezb_app_signal_get_params(app_signal));
+        if (params != nullptr) {
+            ESP_LOGI(TAG, "Permit-join %s (%u s)", params->duration ? "open" : "closed",
+                     params->duration);
+        }
+    } break;
 
     default:
-        ESP_LOGD(TAG, "Zigbee signal: %s (0x%02x)", ezb_app_signal_to_string(signal_type),
+        ESP_LOGI(TAG, "Zigbee signal: %s (0x%04x)", ezb_app_signal_to_string(signal_type),
                  signal_type);
         break;
     }
