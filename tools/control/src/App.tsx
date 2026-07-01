@@ -33,6 +33,22 @@ export default function App() {
   const [seeking, setSeeking] = useState(false);
   const [raw, setRaw] = useState("");
   const [position, setPosition] = useState<Position | null>(null);
+  const [dark, setDark] = useState(() =>
+    document.documentElement.classList.contains("dark"),
+  );
+
+  const toggleTheme = useCallback(() => {
+    setDark((prev) => {
+      const next = !prev;
+      document.documentElement.classList.toggle("dark", next);
+      try {
+        localStorage.setItem("theme", next ? "dark" : "light");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
 
   // Wire client callbacks once.
   useEffect(() => {
@@ -256,9 +272,17 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <h1>HV-MRF-01 Control</h1>
-        <div className={`conn conn-${status}`}>
+      <header className="masthead">
+        <div className="eyebrow">hoppvals / hv-mrf-01 / control</div>
+        <h1>Blind Controller</h1>
+        <p className="sub">
+          Tune, drive, and home the dual-motor blind over its WiFi debug-mode
+          websocket. Gains apply live; the console mirrors every command.
+        </p>
+      </header>
+
+      <div className={`toolbar conn-${status}`}>
+        <div className="conn">
           <input
             value={ip}
             onChange={(e) => setIp(e.target.value)}
@@ -266,177 +290,251 @@ export default function App() {
             disabled={connected || status === "connecting"}
           />
           {connected || status === "connecting" ? (
-            <button onClick={disconnect}>Disconnect</button>
+            <button className="btn" onClick={disconnect}>
+              Disconnect
+            </button>
           ) : (
-            <button onClick={connect}>Connect</button>
+            <button className="btn btn-primary" onClick={connect}>
+              Connect
+            </button>
           )}
-          <span className="status-dot" /> <span className="status-label">{status}</span>
         </div>
-      </header>
+        <span className="status-pill">
+          <span className="status-dot" />
+          {status}
+        </span>
+        <div className="spacer" />
+        <button
+          className="theme-toggle"
+          onClick={toggleTheme}
+          title="Toggle dark mode"
+        >
+          {dark ? "☀ Light" : "☾ Dark"}
+        </button>
+      </div>
 
       <main>
-        <section className="panel motion">
-          <h2>Motion</h2>
-          <label className="rpm">
-            RPM
-            <input
-              type="number"
-              min={1}
-              max={300}
-              value={rpm}
-              onChange={(e) => setRpm(Number(e.target.value))}
-            />
-          </label>
-          <div className="move-buttons">
-            <button
-              className={`move ${moving === "raise" ? "active" : ""}`}
-              disabled={!connected}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                move("raise");
-              }}
-              onPointerUp={stop}
-              onPointerLeave={() => moving === "raise" && stop()}
-            >
-              ▲ Raise
-            </button>
-            <button
-              className={`move ${moving === "lower" ? "active" : ""}`}
-              disabled={!connected}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                move("lower");
-              }}
-              onPointerUp={stop}
-              onPointerLeave={() => moving === "lower" && stop()}
-            >
-              ▼ Lower
-            </button>
-            <button className="stop" onClick={stop}>
-              ■ STOP
-            </button>
-          </div>
-          <div className="move-buttons">
-            <button
-              className="home"
-              disabled={!connected || homing}
-              onClick={home}
-            >
-              {homing ? "⌂ Homing…" : "⌂ Home"}
-            </button>
-          </div>
-          <div className="goto-row">
-            <label className="rpm">
-              Go to %
-              <input
-                type="number"
-                min={0}
-                max={100}
-                value={pct}
-                onChange={(e) => setPct(Number(e.target.value))}
-              />
-            </label>
-            <button
-              className="home"
-              disabled={!connected || seeking || homing}
-              onClick={gotoPct}
-            >
-              {seeking ? "Going…" : "Go"}
-            </button>
-          </div>
-          <div className={`position ${position?.moving ? "moving" : ""}`}>
-            <span className="plabel">Position</span>
-            {position && position.valid ? (
-              <span className="pval">
-                {position.mm.toFixed(1)} mm
-                {posPct !== null && <span className="ppct">{posPct}%</span>}
-                <span className="pstate">
-                  {position.moving ? "moving…" : "stopped"}
-                </span>
-              </span>
-            ) : (
-              <span className="pval muted">
-                {position ? "not homed — run Home" : "—"}
-              </span>
-            )}
-          </div>
-          <p className="hint">
-            Hold <kbd>↑</kbd>/<kbd>W</kbd> to raise, <kbd>↓</kbd>/<kbd>S</kbd> to lower. Release
-            to stop. Buttons work with mouse/touch too. <strong>Home</strong> drives both up to
-            the top stop and zeroes the encoders. <strong>Go to %</strong> needs a prior home and
-            a calibrated mm/rev; 100% = hard stop (clamped to soft stop).
-          </p>
-        </section>
+        <div className="work">
+          <section className="panel motion">
+            <div className="panel-head">
+              <span className="panel-label">Motion</span>
+              <div className="spacer" />
+              <label className="field-inline">
+                RPM
+                <input
+                  type="number"
+                  min={1}
+                  max={300}
+                  value={rpm}
+                  onChange={(e) => setRpm(Number(e.target.value))}
+                />
+              </label>
+            </div>
+            <div className="panel-body">
+              <div className="motion-grid">
+                <div className="controls">
+                  <div className="move-grid">
+                    <button
+                      className={`move ${moving === "raise" ? "active" : ""}`}
+                      disabled={!connected}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        move("raise");
+                      }}
+                      onPointerUp={stop}
+                      onPointerLeave={() => moving === "raise" && stop()}
+                    >
+                      ▲ Raise
+                    </button>
+                    <button
+                      className={`move ${moving === "lower" ? "active" : ""}`}
+                      disabled={!connected}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        move("lower");
+                      }}
+                      onPointerUp={stop}
+                      onPointerLeave={() => moving === "lower" && stop()}
+                    >
+                      ▼ Lower
+                    </button>
+                    <button className="move stop" onClick={stop}>
+                      ■ STOP
+                    </button>
+                  </div>
 
-        <section className="panel config">
-          <h2>
-            Configuration
-            <button className="small" disabled={!connected} onClick={refreshConfig}>
-              Refresh
-            </button>
-          </h2>
-          <div className="sections">
-            {SECTIONS.map((section) => (
-              <section key={section.title} className="cfg-section">
-                <h3>{section.title}</h3>
-                {section.description && (
-                  <p className="section-desc">{section.description}</p>
-                )}
-                {section.fields && (
-                  <div className="fields">
-                    {section.fields.map((f) => (
-                      <Field
-                        key={f.key}
-                        field={f}
-                        live={live}
-                        edits={edits}
-                        connected={connected}
-                        position={position}
-                        onEdit={setEdit}
+                  <div className="row">
+                    <button
+                      className="btn grow"
+                      disabled={!connected || homing}
+                      onClick={home}
+                    >
+                      {homing ? "⌂ Homing…" : "⌂ Home"}
+                    </button>
+                    <label className="field-inline">
+                      Go to %
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={pct}
+                        onChange={(e) => setPct(Number(e.target.value))}
                       />
-                    ))}
+                    </label>
+                    <button
+                      className="btn btn-primary"
+                      disabled={!connected || seeking || homing}
+                      onClick={gotoPct}
+                    >
+                      {seeking ? "Going…" : "Go"}
+                    </button>
                   </div>
-                )}
-                {section.groups?.map((group) => (
-                  <div key={group.title} className="cfg-group">
-                    <h4>{group.title}</h4>
-                    {group.description && (
-                      <p className="group-desc">{group.description}</p>
-                    )}
-                    <div className="fields">
-                      {group.fields.map((f) => (
-                        <Field
-                          key={f.key}
-                          field={f}
-                          live={live}
-                          edits={edits}
-                          connected={connected}
-                          position={position}
-                          onEdit={setEdit}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </section>
-            ))}
-          </div>
-          <div className="config-actions">
-            <button disabled={!connected || dirtyKeys.length === 0} onClick={save}>
-              Save{dirtyKeys.length ? ` (${dirtyKeys.length})` : ""}
-            </button>
-            <button disabled={!connected} onClick={reload}>
-              Reset / Reload
-            </button>
-          </div>
-        </section>
+                </div>
 
-        <section className="panel console">
-          <h2>Console</h2>
+                <div className={`position ${position?.moving ? "moving" : ""}`}>
+                  <div className="position-readout">
+                    <div className="position-top">
+                      <span className="plabel">Position</span>
+                      <span className="pstate">
+                        {position && position.valid
+                          ? position.moving
+                            ? "moving"
+                            : "stopped"
+                          : ""}
+                      </span>
+                    </div>
+                    {position && position.valid ? (
+                      <div className="pval">
+                        <span className="pmm">{position.mm.toFixed(1)}</span>
+                        <span className="punit">mm</span>
+                        {posPct !== null && (
+                          <span className="ppct">{posPct}%</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="pval-muted">
+                        {position ? "not homed — run Home" : "—"}
+                      </div>
+                    )}
+                  </div>
+                  {position && position.valid && posPct !== null && (
+                    <div className="travel-vert">
+                      <div className="vends">
+                        <span>open</span>
+                        <span>closed</span>
+                      </div>
+                      <div className="vtrack">
+                        <div
+                          className="vfill"
+                          style={{ height: `${posPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <p className="hint">
+                Hold <kbd>↑</kbd>/<kbd>W</kbd> to raise, <kbd>↓</kbd>/<kbd>S</kbd>{" "}
+                to lower. Release to stop; buttons work with mouse/touch too.{" "}
+                <strong>Home</strong> drives both up to the top stop and zeroes
+                the encoders. <strong>Go to %</strong> needs a prior home and a
+                calibrated mm/rev; 100% = hard stop (clamped to soft stop).
+              </p>
+            </div>
+          </section>
+
+          <section className="panel config">
+            <div className="panel-head">
+              <span className="panel-label">Configuration</span>
+              <div className="spacer" />
+              <button
+                className="btn btn-sm"
+                disabled={!connected}
+                onClick={refreshConfig}
+              >
+                Refresh
+              </button>
+            </div>
+            <div className="panel-body">
+              <div className="sections">
+                {SECTIONS.map((section) => (
+                  <section key={section.title} className="cfg-section">
+                    <h3>{section.title}</h3>
+                    {section.description && (
+                      <p className="section-desc">{section.description}</p>
+                    )}
+                    {section.fields && (
+                      <div className="fields">
+                        {section.fields.map((f) => (
+                          <Field
+                            key={f.key}
+                            field={f}
+                            live={live}
+                            edits={edits}
+                            connected={connected}
+                            position={position}
+                            onEdit={setEdit}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {section.groups?.map((group) => (
+                      <div key={group.title} className="cfg-group">
+                        <h4>{group.title}</h4>
+                        {group.description && (
+                          <p className="group-desc">{group.description}</p>
+                        )}
+                        <div className="fields">
+                          {group.fields.map((f) => (
+                            <Field
+                              key={f.key}
+                              field={f}
+                              live={live}
+                              edits={edits}
+                              connected={connected}
+                              position={position}
+                              onEdit={setEdit}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </section>
+                ))}
+              </div>
+              <div className="config-actions">
+                <button
+                  className="btn btn-primary"
+                  disabled={!connected || dirtyKeys.length === 0}
+                  onClick={save}
+                >
+                  Save{dirtyKeys.length ? ` (${dirtyKeys.length})` : ""}
+                </button>
+                <button className="btn" disabled={!connected} onClick={reload}>
+                  Reset / Reload
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <section className="console">
+        <div className="panel-head">
+          <span className="panel-label">Console</span>
+          <div className="spacer" />
+          <span className="panel-label">
+            {log.length} line{log.length === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="panel-body">
           <div className="log">
             {log.map((e) => (
               <div key={e.id} className={`log-line log-${e.dir}`}>
-                <span className="log-ts">{new Date(e.ts).toLocaleTimeString()}</span>
+                <span className="log-ts">
+                  {new Date(e.ts).toLocaleTimeString()}
+                </span>
                 <span className="log-tag">{e.dir}</span>
                 <span className="log-text">{e.text}</span>
               </div>
@@ -450,12 +548,14 @@ export default function App() {
               onChange={(e) => setRaw(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendRaw()}
             />
-            <button disabled={!connected} onClick={sendRaw}>
+            <button className="btn" disabled={!connected} onClick={sendRaw}>
               Send
             </button>
           </div>
-        </section>
-      </main>
+        </div>
+      </section>
+
+      <footer>hold-to-move · live tuning · ws debug console</footer>
     </div>
   );
 }
@@ -500,7 +600,7 @@ function Field({
         {field.setFromPosition && (
           <button
             type="button"
-            className="capture"
+            className="capture btn btn-sm"
             disabled={!canCapture}
             title={
               canCapture
