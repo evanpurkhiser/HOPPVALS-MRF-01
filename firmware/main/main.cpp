@@ -23,6 +23,7 @@
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
 #include "hv-mrf-01/position_report.hpp"
+#include "hv-mrf-01/utils.hpp"
 #include "hv-mrf-01/zigbee.hpp"
 
 namespace {
@@ -111,6 +112,7 @@ extern "C" void app_main()
                                                ESP_EVENT_ANY_ID, &on_position_changed,
                                                nullptr));
     ESP_LOGI(TAG, "Starting hv-mrf-01 firmware");
+    hvmrf01::utils::log_identity();
     // Bring up NVS and load persisted config before any consumer reads it.
     if (auto r = hvmrf01::config::init(); !r) {
         ESP_LOGW(TAG, "config init failed (err %d); running on defaults",
