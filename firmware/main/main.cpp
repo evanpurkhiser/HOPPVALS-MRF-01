@@ -40,13 +40,38 @@ esp_timer_handle_t recovery_timer = nullptr;
 
 // Arm the one-shot debug flag and reboot. Halt the control loop and sleep the
 // drivers first so the motors are never mid-drive across the reset.
+//
+// The reset is deferred a beat rather than fired inline: when this runs from the
+// reboot-to-debug ZCL command, the stack still has to transmit the command's
+// Default Response and get its APS ack. Resetting immediately kills the radio
+// first, so the hub sees the command time out ("failed to perform"). The short
+// delay lets the response flush; the recovery-timer path doesn't care about it.
+void do_reset(void *)
+{
+    esp_restart();
+}
+
 void reboot_into_debug(const char *why)
 {
+    static bool rebooting = false;
+
     ESP_LOGW(TAG, "%s; arming debug boot and rebooting", why);
     static_cast<void>(hvmrf01::config::request_debug_boot());
     hvmrf01::motion::stop();
     hvmrf01::motor::disable();
-    esp_restart();
+
+    if (rebooting) {
+        return;
+    }
+    rebooting = true;
+
+    static esp_timer_handle_t reset_timer = nullptr;
+    const esp_timer_create_args_t args{.callback        = &do_reset,
+                                       .arg             = nullptr,
+                                       .dispatch_method = ESP_TIMER_TASK,
+                                       .name            = "reset"};
+    ESP_ERROR_CHECK(esp_timer_create(&args, &reset_timer));
+    ESP_ERROR_CHECK(esp_timer_start_once(reset_timer, 1000 * 1000));  // 1 s
 }
 
 void enter_debug_recovery(void *)
