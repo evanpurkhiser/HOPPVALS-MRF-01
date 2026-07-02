@@ -402,11 +402,33 @@ extern "C" ezb_zcl_status_t config_cluster_process_cmd(const ezb_zcl_cmd_hdr_t* 
     }
 }
 
+// A command sent with a manufacturer code arrives here rather than at the custom
+// cluster's process_cmd_cb — the SDK routes manufacturer-specific commands to
+// this core callback, and process_cmd_cb only sees non-manufacturer commands. So
+// forward our config cluster's manufacturer commands to the same handler.
+void handle_manuf_spec_cmd(ezb_zcl_manuf_spec_cmd_message_t* msg) noexcept
+{
+    if (msg == nullptr || msg->in.header == nullptr) {
+        return;
+    }
+    const auto* hdr = msg->in.header;
+
+    if (hdr->dst_ep != EP_WINDOW_COVERING || hdr->cluster_id != CLUSTER_CONFIG ||
+        hdr->manuf_code != MANUF_CODE) {
+        return;
+    }
+
+    msg->out.result = config_cluster_process_cmd(hdr, msg->in.payload, msg->in.payload_size);
+}
+
 extern "C" void zcl_action_handler(ezb_zcl_core_action_callback_id_t cb_id, void* msg)
 {
     switch (cb_id) {
     case EZB_ZCL_CORE_SET_ATTR_VALUE_CB_ID:
         handle_set_attr(static_cast<ezb_zcl_set_attr_value_message_t*>(msg));
+        break;
+    case EZB_ZCL_CORE_MANUF_SPEC_CMD_CB_ID:
+        handle_manuf_spec_cmd(static_cast<ezb_zcl_manuf_spec_cmd_message_t*>(msg));
         break;
     case EZB_ZCL_CORE_WINDOW_COVERING_MOVEMENT_CB_ID:
         handle_window_covering(static_cast<ezb_zcl_window_covering_movement_message_t*>(msg));
