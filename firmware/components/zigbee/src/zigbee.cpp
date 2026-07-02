@@ -72,6 +72,7 @@ constexpr std::uint16_t ATTR_SOFT_STOP_MM = 0x0001; // uint16, mm down limit (0 
 constexpr std::uint16_t ATTR_HARD_STOP_MM = 0x0002; // uint16, mm full travel
 
 constexpr std::uint8_t  CMD_REBOOT_DEBUG  = 0x00;   // server-received, no payload
+constexpr std::uint8_t  CMD_CALIBRATE     = 0x01;   // server-received, no payload; homes to the top
 
 // Accepted speed range, mirrored by the quirk's number entity. mm limits accept
 // any uint16, so motion's own clamping is the only bound there.
@@ -382,13 +383,23 @@ extern "C" void config_cluster_write_attr(std::uint8_t, std::uint16_t attr_id, v
 extern "C" ezb_zcl_status_t config_cluster_process_cmd(const ezb_zcl_cmd_hdr_t* hdr,
                                                        const std::uint8_t*, std::uint16_t) noexcept
 {
-    if (hdr != nullptr && hdr->cmd_id == CMD_REBOOT_DEBUG) {
+    if (hdr == nullptr) {
+        return EZB_ZCL_STATUS_UNSUP_CMD;
+    }
+
+    switch (hdr->cmd_id) {
+    case CMD_REBOOT_DEBUG:
         ESP_LOGI(TAG, "Config cmd: reboot into debug mode");
         post(Event::EnterDebug);
         return EZB_ZCL_STATUS_SUCCESS;
+    case CMD_CALIBRATE:
+        ESP_LOGI(TAG, "Config cmd: calibrate (home to top)");
+        post(Event::Calibrate);
+        return EZB_ZCL_STATUS_SUCCESS;
+    default:
+        ESP_LOGW(TAG, "Config cmd: unsupported 0x%02x", hdr->cmd_id);
+        return EZB_ZCL_STATUS_UNSUP_CMD;
     }
-    ESP_LOGW(TAG, "Config cmd: unsupported 0x%02x", hdr ? hdr->cmd_id : 0xFF);
-    return EZB_ZCL_STATUS_UNSUP_CMD;
 }
 
 extern "C" void zcl_action_handler(ezb_zcl_core_action_callback_id_t cb_id, void* msg)

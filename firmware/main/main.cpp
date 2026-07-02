@@ -90,6 +90,12 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
     case Event::EnterDebug:
         reboot_into_debug("reboot-to-debug command received");
         break;
+    case Event::Calibrate:
+        ESP_LOGI(TAG, "→ calibrate: homing to top");
+        if (!hvmrf01::motion::begin_home()) {
+            ESP_LOGW(TAG, "calibrate ignored — homing already in progress");
+        }
+        break;
     }
 }
 

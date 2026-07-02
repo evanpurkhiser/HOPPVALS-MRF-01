@@ -401,6 +401,10 @@ zigbee::CommandStatus handle_open()
 
 zigbee::CommandStatus handle_close()
 {
+    if (!homed.load()) {
+        ESP_LOGW(TAG, "close rejected — not homed; calibrate before lowering");
+        return zigbee::CommandStatus::Failure;
+    }
     const int rpm = config::get().motion.cover_rpm;
     ESP_LOGI(TAG, "close → lower @ %d RPM", rpm);
     set_target(rpm, Direction::Lower);
@@ -433,12 +437,27 @@ zigbee::CommandStatus handle_go_to(std::uint8_t pct)
     return zigbee::CommandStatus::Success;
 }
 
+// Worker for begin_home(): run the blocking homing routine off the caller's
+// thread, then self-delete. home() clears the `homing` flag when it finishes.
+void home_task(void*)
+{
+    home();
+    vTaskDelete(nullptr);
+}
+
 }  // namespace
 
 void set_target(int rpm, Direction d)
 {
     if (fault.load()) {
         ESP_LOGW(TAG, "set_target ignored — controller faulted; call stop() to clear");
+        return;
+    }
+    // Down travel is unbounded until a home reference exists (no zero to enforce
+    // the soft/hard stop against), so refuse to lower while unhomed — only raise
+    // is allowed, which is also how the blind gets homed in the first place.
+    if (d == Direction::Lower && !homed.load()) {
+        ESP_LOGW(TAG, "lower ignored — not homed; raise or calibrate first");
         return;
     }
     if (rpm < 0) rpm = 0;
@@ -471,10 +490,12 @@ HomeResult home()
     const int  stopped_max   = tune.stall_delta_max;
 
     // Take the motors away from the control task and clear any latched fault so
-    // homing works even after a sync/stall fault.
+    // homing works even after a sync/stall fault. Also drop any active position
+    // seek so the control task doesn't resume a stale target when we hand back.
     homing.store(true);
     target_rpm.store(0);
     direction.store(Direction::Stop);
+    position_mode.store(false);
     fault.store(false);
 
     struct Mtr
@@ -540,6 +561,24 @@ HomeResult home()
     ESP_LOGI(TAG, "homing done: L=%s R=%s",
              result.left ? "ok" : "TIMEOUT", result.right ? "ok" : "TIMEOUT");
     return result;
+}
+
+bool begin_home()
+{
+    // Claim the homing flag up front (CAS) so the control task stands down
+    // before the worker starts driving, and so a second calibrate while one is
+    // already running is a no-op rather than two runs fighting for the motors.
+    bool expected = false;
+    if (!homing.compare_exchange_strong(expected, true)) {
+        return false;
+    }
+    const BaseType_t ok =
+        xTaskCreate(&home_task, "home", STACK_SZ, nullptr, TASK_PRIO, nullptr);
+    if (ok != pdPASS) {
+        homing.store(false);
+        return false;
+    }
+    return true;
 }
 
 GoToResult go_to_pct(float pct, int rpm)

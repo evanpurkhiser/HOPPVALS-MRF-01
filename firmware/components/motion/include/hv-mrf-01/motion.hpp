@@ -53,6 +53,13 @@ struct HomeResult
 // home_timeout_s elapses; returns which sides settled. Both motors end braked.
 HomeResult home();
 
+// Non-blocking home: kick off a homing run on a one-shot task and return
+// immediately, for callers that must not block (the Zigbee "calibrate" command
+// runs in the stack callback). Returns false if a homing run is already in
+// progress. The control task stands down for the duration; is_homed()/is_moving()
+// reflect the outcome once it completes.
+bool begin_home();
+
 // Outcome of a go_to_mm() move.
 enum class GoToStatus : std::uint8_t
 {

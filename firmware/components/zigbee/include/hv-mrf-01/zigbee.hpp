@@ -22,6 +22,7 @@ enum class Event : std::int32_t
     LeftNetwork,   // no data
     Identify,      // data: std::uint8_t ZCL IdentifyEffect ID
     EnterDebug,    // no data: the reboot-to-debug config command was received
+    Calibrate,     // no data: the calibrate (home to top) config command was received
 };
 
 // Commands: synchronous handler interface
