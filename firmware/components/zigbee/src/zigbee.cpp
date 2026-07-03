@@ -553,7 +553,9 @@ ezb_af_ep_desc_t build_window_covering_endpoint()
     cfg.window_covering_cfg.window_covering_type =
         EZB_ZCL_WINDOW_COVERING_WINDOW_COVERING_TYPE_ROLLERSHADE;
     cfg.window_covering_cfg.config_status = EZB_ZCL_WINDOW_COVERING_CONFIG_STATUS_OPERATIONAL |
-                                            EZB_ZCL_WINDOW_COVERING_CONFIG_STATUS_ONLINE;
+                                            EZB_ZCL_WINDOW_COVERING_CONFIG_STATUS_ONLINE |
+                                            EZB_ZCL_WINDOW_COVERING_CONFIG_STATUS_LIFT_CLOSED_LOOP |
+                                            EZB_ZCL_WINDOW_COVERING_CONFIG_STATUS_LIFT_ENCODER_CONTROLLED;
     cfg.window_covering_cfg.mode          = 0;
 
     auto ep = ezb_zha_create_window_covering(EP_WINDOW_COVERING, &cfg);
