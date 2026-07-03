@@ -483,6 +483,24 @@ void stamp_identity(ezb_af_ep_desc_t ep)
     ezb_zcl_basic_cluster_desc_add_attr(basic, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, sw_build_id());
 }
 
+// The SDK's Window Covering cluster carries only its mandatory attributes
+// (type, config status, mode). CurrentPositionLiftPercentage is optional, so add
+// it explicitly — without it report_position()'s set_attr_value fails (status
+// 0x01, attribute not found), the hub shows the position as unknown, and a cover
+// with no position attribute won't accept a go-to-percentage.
+void add_position_attribute(ezb_af_ep_desc_t ep)
+{
+    auto wc = ezb_af_endpoint_get_cluster_desc(ep, EZB_ZCL_CLUSTER_ID_WINDOW_COVERING,
+                                               EZB_ZCL_CLUSTER_SERVER);
+    if (wc == nullptr) {
+        ESP_LOGE(TAG, "window covering cluster desc missing; can't add position attr");
+        return;
+    }
+    static std::uint8_t initial_pct = 0;
+    ezb_zcl_window_covering_cluster_desc_add_attr(
+        wc, EZB_ZCL_ATTR_WINDOW_COVERING_CURRENT_POSITION_LIFT_PERCENTAGE_ID, &initial_pct);
+}
+
 // Attach the manufacturer-specific config cluster to an existing endpoint:
 // seed the attribute values from the persisted config, build the cluster
 // descriptor, and register the handlers that gate/persist writes and process
@@ -540,6 +558,7 @@ ezb_af_ep_desc_t build_window_covering_endpoint()
 
     auto ep = ezb_zha_create_window_covering(EP_WINDOW_COVERING, &cfg);
     stamp_identity(ep);
+    add_position_attribute(ep);
     add_config_cluster(ep);
     return ep;
 }
