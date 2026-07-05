@@ -684,21 +684,51 @@ int cmd_config(int argc, char** argv)
     return 1;
 }
 
-// Reboot into WiFi debug mode by setting the one-shot boot flag.
-int cmd_debug(int, char**)
+// Stop the loop and sleep the drivers so the motors aren't mid-drive across
+// the reset, then reboot. Never returns.
+[[noreturn]] void reset_now()
 {
-    if (auto r = config::request_debug_boot(); !r) {
-        emit("failed to arm debug boot (err %d)\n", static_cast<int>(r.error()));
-        return 1;
-    }
-    emit("debug boot armed; rebooting into WiFi debug mode...\n");
-    // Stop the loop and sleep the drivers so the motors aren't mid-drive across
-    // the reset.
     hvmrf01::motion::stop();
     hvmrf01::motor::disable();
     vTaskDelay(pdMS_TO_TICKS(200));
     esp_restart();
-    return 0;  // unreached
+}
+
+// Reboot into either radio personality. `debug` arms the one-shot boot flag so
+// the device comes back on WiFi; `normal` clears any armed flag so it returns
+// to Zigbee. No arg defaults to normal.
+int cmd_reboot(int argc, char** argv)
+{
+    const char* mode = (argc > 1) ? argv[1] : "normal";
+
+    if (std::strcmp(mode, "debug") == 0) {
+        if (auto r = config::request_debug_boot(); !r) {
+            emit("failed to arm debug boot (err %d)\n", static_cast<int>(r.error()));
+            return 1;
+        }
+        emit("debug boot armed; rebooting into WiFi debug mode...\n");
+        reset_now();
+    }
+
+    if (std::strcmp(mode, "normal") == 0) {
+        // Clear any armed flag so a prior `reboot debug` (e.g. over Zigbee)
+        // doesn't send us back into debug mode.
+        config::take_debug_boot();
+        emit("rebooting into normal Zigbee mode...\n");
+        reset_now();
+    }
+
+    emit("usage: reboot [normal|debug]\n");
+    return 1;
+}
+
+// Alias for `reboot debug`, kept for muscle memory.
+int cmd_debug(int, char**)
+{
+    char arg0[] = "reboot";
+    char arg1[] = "debug";
+    char* argv[] = {arg0, arg1};
+    return cmd_reboot(2, argv);
 }
 
 // Forward-declared so they can appear in the command table.
@@ -729,7 +759,8 @@ const esp_console_cmd_t COMMANDS[] = {
         {.command = "trace",  .help = "Stream encoder counts (CSV) for capture+plot",     .hint = "[duration_s=3] [hz=100]", .func = &cmd_trace, .argtable = nullptr},
         {.command = "motion", .help = "Closed-loop speed control",                        .hint = "<rpm> raise|lower | stop", .func = &cmd_motion, .argtable = nullptr},
         {.command = "config", .help = "View/set/save persisted config",                   .hint = "[set <key> <val> | save | reset]", .func = &cmd_config, .argtable = nullptr},
-        {.command = "debug",  .help = "Reboot into WiFi debug mode",                       .hint = nullptr, .func = &cmd_debug,  .argtable = nullptr},
+        {.command = "reboot", .help = "Reboot into a radio mode (default normal)",          .hint = "[normal|debug]", .func = &cmd_reboot, .argtable = nullptr},
+        {.command = "debug",  .help = "Alias for `reboot debug` (WiFi debug mode)",         .hint = nullptr, .func = &cmd_debug,  .argtable = nullptr},
         {.command = "home",   .help = "Home both motors up to the top hard stop",          .hint = nullptr, .func = &cmd_home,   .argtable = nullptr},
         {.command = "goto",   .help = "Go to an absolute position (mm below the homed top)", .hint = "<mm> [rpm]", .func = &cmd_goto, .argtable = nullptr},
         {.command = "gotopct",.help = "Go to a position as % of full travel (clamped to soft stop)", .hint = "<0-100> [rpm]", .func = &cmd_gotopct, .argtable = nullptr},
