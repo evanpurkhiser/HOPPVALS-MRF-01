@@ -20,6 +20,7 @@
 #include "hv-mrf-01/encoder.hpp"
 #include "hv-mrf-01/http_debug.hpp"
 #include "hv-mrf-01/led.hpp"
+#include "hv-mrf-01/logtap.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
 #include "hv-mrf-01/position_report.hpp"
@@ -60,6 +61,10 @@ void reboot_into_debug(const char *why)
     hvmrf01::motion::stop();
     hvmrf01::motor::disable();
 
+    // TEMP: flush captured logs so this normal-mode session is readable over the
+    // debug console's /log endpoint after the reboot.
+    hvmrf01::logtap::save();
+
     if (rebooting) {
         return;
     }
@@ -77,6 +82,13 @@ void reboot_into_debug(const char *why)
 void enter_debug_recovery(void *)
 {
     reboot_into_debug("no Zigbee join within recovery window");
+}
+
+// TEMP: periodically persist captured logs while in normal mode, so a crash or
+// power-cycle (not just a clean reboot-to-debug) still leaves a recent capture.
+void periodic_log_save(void *)
+{
+    hvmrf01::logtap::save();
 }
 
 // Bridge the transport-agnostic position reporter to the hub. The reporter
@@ -129,6 +141,7 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
 
 extern "C" void app_main()
 {
+    hvmrf01::logtap::install();  // TEMP: tee logs to RAM/NVS for /log readback
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(esp_event_handler_register(hvmrf01::zigbee::EVENTS,
                                                ESP_EVENT_ANY_ID, &on_zigbee_event,
@@ -174,4 +187,17 @@ extern "C" void app_main()
     };
     ESP_ERROR_CHECK(esp_timer_create(&recovery_args, &recovery_timer));
     ESP_ERROR_CHECK(esp_timer_start_once(recovery_timer, RECOVERY_TIMEOUT_US));
+
+    // TEMP: snapshot captured logs to NVS every 5 s so a normal-mode session is
+    // recoverable via /log after rebooting into debug mode.
+    static esp_timer_handle_t log_timer = nullptr;
+    const esp_timer_create_args_t log_args{
+        .callback              = &periodic_log_save,
+        .arg                   = nullptr,
+        .dispatch_method       = ESP_TIMER_TASK,
+        .name                  = "logsave",
+        .skip_unhandled_events = false,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&log_args, &log_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(log_timer, 5 * 1000 * 1000));  // 5 s
 }

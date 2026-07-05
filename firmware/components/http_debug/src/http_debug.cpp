@@ -17,6 +17,7 @@
 
 #include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/console.hpp"
+#include "hv-mrf-01/logtap.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
 #include "hv-mrf-01/utils.hpp"
@@ -241,6 +242,25 @@ esp_err_t ota_handler(httpd_req_t* req)
     return ESP_OK;
 }
 
+// TEMP: dump the captured log — the persisted blob from the previous (normal-
+// mode) session followed by this session's live buffer.
+esp_err_t log_handler(httpd_req_t* req)
+{
+    static char buf[8192];
+    httpd_resp_set_type(req, "text/plain");
+
+    httpd_resp_sendstr_chunk(req, "===== persisted (previous session) =====\n");
+    if (const auto n = logtap::copy_persisted(buf, sizeof(buf)); n > 0) {
+        httpd_resp_send_chunk(req, buf, n);
+    }
+    httpd_resp_sendstr_chunk(req, "\n===== live (this session) =====\n");
+    if (const auto n = logtap::copy_live(buf, sizeof(buf)); n > 0) {
+        httpd_resp_send_chunk(req, buf, n);
+    }
+    httpd_resp_send_chunk(req, nullptr, 0);
+    return ESP_OK;
+}
+
 esp_err_t start_http_server()
 {
     httpd_handle_t server = nullptr;
@@ -274,6 +294,17 @@ esp_err_t start_http_server()
         .supported_subprotocol    = nullptr,
     };
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &ota), TAG, "ota register");
+
+    const httpd_uri_t log{
+        .uri                      = "/log",
+        .method                   = HTTP_GET,
+        .handler                  = &log_handler,
+        .user_ctx                 = nullptr,
+        .is_websocket             = false,
+        .handle_ws_control_frames = false,
+        .supported_subprotocol    = nullptr,
+    };
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &log), TAG, "log register");
     return ESP_OK;
 }
 
