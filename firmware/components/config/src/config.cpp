@@ -18,6 +18,7 @@ constexpr auto* TAG = "hv-mrf-01.config";
 // names (each ≤ 15 chars, the NVS key limit).
 constexpr auto* NS_MOTION  = "motion";
 constexpr auto* NS_NETWORK = "network";
+constexpr auto* NS_DEVICE  = "device";
 
 // Dedicated namespace + key for the one-shot debug-boot flag (kept apart from
 // Config so it can be read before init() and cleared on its own).
@@ -146,6 +147,42 @@ void load_network(Config& cfg)
     nvs_close(h);
 }
 
+void load_device(Config& cfg)
+{
+    nvs_handle_t h;
+    const esp_err_t err = nvs_open(NS_DEVICE, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "no persisted '%s' config (%s); using defaults",
+                 NS_DEVICE, esp_err_to_name(err));
+        return;
+    }
+
+    load_str(h, "location", cfg.device.location, sizeof(cfg.device.location));
+
+    nvs_close(h);
+}
+
+std::expected<void, Error> save_device(const Device& d)
+{
+    nvs_handle_t h;
+    if (nvs_open(NS_DEVICE, NVS_READWRITE, &h) != ESP_OK) {
+        return std::unexpected(Error::NvsOpen);
+    }
+
+    const esp_err_t writes = nvs_set_str(h, "location", d.location);
+    if (writes != ESP_OK) {
+        nvs_close(h);
+        return std::unexpected(Error::NvsWrite);
+    }
+
+    const esp_err_t committed = nvs_commit(h);
+    nvs_close(h);
+    if (committed != ESP_OK) {
+        return std::unexpected(Error::NvsCommit);
+    }
+    return {};
+}
+
 std::expected<void, Error> save_network(const Network& n)
 {
     nvs_handle_t h;
@@ -226,12 +263,15 @@ std::expected<void, Error> init()
     Config cfg{};  // defaults
     load_motion(cfg);
     load_network(cfg);
+    load_device(cfg);
     publish(cfg);
 
     ESP_LOGI(TAG, "config loaded: duty_per_rpm=%.2f kp=%.2f ki=%.2f i_max=%.0f "
                   "k_sync=%.3f cover_rpm=%d",
              cfg.motion.duty_per_rpm, cfg.motion.kp, cfg.motion.ki,
              cfg.motion.i_max, cfg.motion.k_sync, cfg.motion.cover_rpm);
+    ESP_LOGI(TAG, "device location: %s",
+             cfg.device.location[0] ? cfg.device.location : "(unset)");
     return {};
 }
 
@@ -255,6 +295,9 @@ std::expected<void, Error> save(const Config& cfg)
         return r;
     }
     if (auto r = save_network(cfg.network); !r) {
+        return r;
+    }
+    if (auto r = save_device(cfg.device); !r) {
         return r;
     }
     publish(cfg);

@@ -166,11 +166,25 @@ struct Network {
     int connect_timeout_s = 30;
 };
 
+// User-assigned location for the unit, e.g. "Bedroom Right". Cosmetic: it
+// personalizes an otherwise interchangeable device. When set it slugs into the
+// WiFi/DHCP hostname (replacing the hex device id) and is surfaced as the
+// Zigbee Basic cluster LocationDescription so a hub can label the device.
+// Empty falls back to the hex device id and no location string. Stored in NVS
+// namespace "device". Does not affect the reported model or manufacturer.
+struct Device {
+    // Location text. 32 chars + NUL is generous for "Bedroom Center"-style
+    // labels; the hostname slug and the ZCL LocationDescription are each capped
+    // to their own limits when derived, so this can hold the full text.
+    char location[33] = "";
+};
+
 // The full device configuration. Grows by composition — each new feature adds
 // a sub-struct here and a matching NVS namespace.
 struct Config {
     Motion  motion;
     Network network;
+    Device  device;
 };
 
 // One-shot "boot into debug mode" flag

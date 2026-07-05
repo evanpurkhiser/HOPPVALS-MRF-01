@@ -32,6 +32,48 @@ const char* device_id()
     return id;
 }
 
+std::size_t slugify(const char* in, char* out, std::size_t cap)
+{
+    if (out == nullptr || cap == 0) {
+        return 0;
+    }
+
+    std::size_t n = 0;
+    bool pending_hyphen = false;
+
+    for (const char* p = in; p != nullptr && *p != '\0' && n + 1 < cap; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+
+        if (c >= 'A' && c <= 'Z') {
+            if (pending_hyphen && n > 0) out[n++] = '-';
+            pending_hyphen = false;
+            if (n + 1 < cap) out[n++] = static_cast<char>(c - 'A' + 'a');
+            continue;
+        }
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            if (pending_hyphen && n > 0) out[n++] = '-';
+            pending_hyphen = false;
+            if (n + 1 < cap) out[n++] = static_cast<char>(c);
+            continue;
+        }
+
+        // Any other byte is a separator: remember that a hyphen is owed, but
+        // only emit it once a following kept character actually arrives, so
+        // leading, trailing, and repeated separators never reach the output.
+        pending_hyphen = true;
+    }
+
+    // A separator's hyphen is written just before its following character, so a
+    // truncation that stops between the two (the char didn't fit `cap`) can
+    // leave a dangling trailing hyphen. Drop it.
+    if (n > 0 && out[n - 1] == '-') {
+        n--;
+    }
+
+    out[n] = '\0';
+    return n;
+}
+
 void log_identity()
 {
     std::uint8_t mac[8] = {};

@@ -60,12 +60,17 @@ esp_err_t wifi_init_sta(const config::Network& net)
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "netif init");
     esp_netif_t* sta_netif = esp_netif_create_default_wifi_sta();
     // DHCP hostname so the device shows up by name in the router/DNS lease
-    // table instead of the default "espressif". The per-device suffix matches
-    // the tail of the IEEE address ZHA shows, so a unit is identifiable by the
-    // same id on WiFi and Zigbee. Static: esp_netif keeps the pointer, and the
-    // name is set before DHCP runs.
+    // table instead of the default "espressif". A configured device location
+    // slugs into the suffix ("hv-mrf-01-bedroom-right"); with none set the
+    // suffix is the tail of the IEEE address ZHA shows, so an unlabeled unit is
+    // still identifiable by the same id on WiFi and Zigbee. Static: esp_netif
+    // keeps the pointer, and the name is set before DHCP runs.
     static char hostname[32] = {};
-    std::snprintf(hostname, sizeof(hostname), "hv-mrf-01-%s", utils::device_id());
+    char slug[sizeof(hostname) - sizeof("hv-mrf-01-") + 1] = {};
+    const char* suffix = utils::slugify(config::get().device.location, slug, sizeof(slug)) > 0
+                             ? slug
+                             : utils::device_id();
+    std::snprintf(hostname, sizeof(hostname), "hv-mrf-01-%s", suffix);
     static_cast<void>(esp_netif_set_hostname(sta_netif, hostname));
 
     const wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();

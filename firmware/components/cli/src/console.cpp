@@ -599,6 +599,7 @@ void print_config(const config::Config& c)
     emit("net.ssid            = %s\n", c.network.ssid);
     emit("net.pass            = %s\n", c.network.pass[0] ? "(set)" : "(unset)");
     emit("net.conn_to         = %d\n", c.network.connect_timeout_s);
+    emit("device.location     = %s\n", c.device.location[0] ? c.device.location : "(unset)");
 }
 
 // Apply one "key value" assignment to the working config. Returns false if the
@@ -633,6 +634,7 @@ bool set_config_field(std::string_view key, const char* value)
     else if (key == "net.ssid")    std::snprintf(c.network.ssid, sizeof(c.network.ssid), "%s", value);
     else if (key == "net.pass")    std::snprintf(c.network.pass, sizeof(c.network.pass), "%s", value);
     else if (key == "net.conn_to") c.network.connect_timeout_s = std::atoi(value);
+    else if (key == "device.location") std::snprintf(c.device.location, sizeof(c.device.location), "%s", value);
     else return false;
 
     return true;

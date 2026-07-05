@@ -469,6 +469,28 @@ const char* sw_build_id()
     return buf;
 }
 
+// The configured device location as a length-prefixed ZCL character string, or
+// nullptr when none is set — stamped as the Basic cluster LocationDescription
+// so the unit's "Bedroom Right" label travels with it on the Zigbee side. ZCL
+// caps LocationDescription at 16 chars, so a longer value is truncated. Built
+// once — like sw_build_id(), the SDK keeps our pointer, so the buffer is a
+// function-local static that outlives registration.
+const char* location_desc()
+{
+    static char buf[1 + 16] = {};
+    if (buf[0] == '\0') {
+        const config::Config cfg      = config::get();
+        const char*          location = cfg.device.location;
+        const auto           len      = std::min(std::strlen(location), sizeof(buf) - 1);
+        if (len == 0) {
+            return nullptr;
+        }
+        buf[0] = static_cast<char>(len);
+        std::memcpy(&buf[1], location, len);
+    }
+    return buf;
+}
+
 void stamp_identity(ezb_af_ep_desc_t ep)
 {
     auto basic =
@@ -481,6 +503,10 @@ void stamp_identity(ezb_af_ep_desc_t ep)
     ezb_zcl_basic_cluster_desc_add_attr(basic, EZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
                                         const_cast<char*>(MODEL_IDENTIFIER));
     ezb_zcl_basic_cluster_desc_add_attr(basic, EZB_ZCL_ATTR_BASIC_SW_BUILD_ID_ID, sw_build_id());
+
+    if (const char* loc = location_desc(); loc != nullptr) {
+        ezb_zcl_basic_cluster_desc_add_attr(basic, EZB_ZCL_ATTR_BASIC_LOCATION_DESCRIPTION_ID, loc);
+    }
 }
 
 // The SDK's Window Covering cluster carries only its mandatory attributes
