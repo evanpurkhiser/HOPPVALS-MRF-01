@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include "esp_console.h"
+#include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -726,6 +727,7 @@ int cmd_debug(int, char**)
 
 // Forward-declared so they can appear in the command table.
 int cmd_help(int argc, char** argv);
+int cmd_version(int argc, char** argv);
 int cmd_home(int argc, char** argv);
 int cmd_profile(int argc, char** argv);
 int cmd_goto(int argc, char** argv);
@@ -760,6 +762,7 @@ const esp_console_cmd_t COMMANDS[] = {
         {.command = "pos",    .help = "Print current position (mm below the homed top)",   .hint = nullptr, .func = &cmd_pos, .argtable = nullptr},
         {.command = "profile",.help = "Open-loop both-motor drive; stream pos+current CSV", .hint = "<up|down> <duty> <rotations> [hz] [max_s]", .func = &cmd_profile, .argtable = nullptr},
         {.command = "selftest",.help = "Automated motor/encoder/current self-test (PASS/FAIL)", .hint = "[L|R|both]", .func = &cmd_selftest, .argtable = nullptr},
+        {.command = "version",.help = "Print firmware build identity",                    .hint = nullptr, .func = &cmd_version, .argtable = nullptr},
         {.command = "help",   .help = "List available commands",                           .hint = nullptr, .func = &cmd_help,   .argtable = nullptr},
 };
 
@@ -774,6 +777,23 @@ int cmd_help(int, char**)
             emit("%-7s %s\n", c.command, c.help);
         }
     }
+    return 0;
+}
+
+int cmd_version(int, char**)
+{
+    const auto* app = esp_app_get_description();
+
+    emit("project: %s\n", app->project_name);
+    emit("version: %s\n", app->version);
+    emit("idf:     %s\n", app->idf_ver);
+    emit("built:   %s %s\n", app->date, app->time);
+    emit("elf_sha: ");
+    for (const auto byte : app->app_elf_sha256) {
+        emit("%02x", byte);
+    }
+    emit("\n");
+
     return 0;
 }
 
