@@ -13,8 +13,8 @@ enum class Mode
 };
 
 // Stop motion, select the next boot's radio mode, and schedule a near-future
-// reset. Returning before esp_restart() lets Zigbee and WebSocket command
-// responses flush instead of looking like command timeouts to their callers.
+// reset. The grace period lets Zigbee's Default Response/APS ack path and
+// WebSocket replies flush instead of looking like command timeouts to callers.
 std::expected<void, config::Error> async(Mode mode, const char* why);
 
 }  // namespace hvmrf01::reboot

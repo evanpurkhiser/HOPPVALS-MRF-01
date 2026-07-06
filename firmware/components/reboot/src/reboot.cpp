@@ -13,7 +13,10 @@ namespace hvmrf01::reboot {
 namespace {
 
 constexpr auto* TAG = "hv-mrf-01.reboot";
-constexpr auto  REBOOT_DELAY_US = 1000 * 1000;
+// ZHA waits for a Default Response, and the Zigbee stack may still need APS/MAC
+// retry time after our command handler returns. One second was occasionally too
+// short and surfaced as HA command timeouts.
+constexpr auto  REBOOT_DELAY_US = 5 * 1000 * 1000;
 
 bool rebooting = false;
 esp_timer_handle_t reset_timer = nullptr;
