@@ -15,6 +15,7 @@ import {
 
 const MOVE_KEYS_UP = new Set(["ArrowUp", "w", "W"]);
 const MOVE_KEYS_DOWN = new Set(["ArrowDown", "s", "S"]);
+const FAST_MOVE_MULTIPLIER = 2;
 
 export default function App() {
   const clientRef = useRef<DeviceClient | null>(null);
@@ -91,9 +92,9 @@ export default function App() {
   }, [client]);
 
   const move = useCallback(
-    (dir: "raise" | "lower") => {
+    (dir: "raise" | "lower", multiplier = 1) => {
       if (!client.isOpen()) return;
-      const r = Math.max(1, Math.min(300, Math.round(rpm)));
+      const r = Math.max(1, Math.min(300, Math.round(rpm * multiplier)));
       client.send(`motion ${r} ${dir}`).catch(() => {});
       setMoving(dir);
     },
@@ -171,21 +172,42 @@ export default function App() {
   useEffect(() => {
     const pressed = new Set<string>();
 
+    const currentDirection = () => {
+      for (const key of pressed) {
+        if (MOVE_KEYS_UP.has(key)) return "raise";
+        if (MOVE_KEYS_DOWN.has(key)) return "lower";
+      }
+
+      return null;
+    };
+
     const isTypingTarget = (t: EventTarget | null) =>
       t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
+      if (e.key === "Shift") {
+        const dir = currentDirection();
+        if (dir) move(dir, FAST_MOVE_MULTIPLIER);
+        return;
+      }
+
       const up = MOVE_KEYS_UP.has(e.key);
       const down = MOVE_KEYS_DOWN.has(e.key);
       if (!up && !down) return;
       e.preventDefault();
       if (pressed.has(e.key)) return; // ignore auto-repeat
       pressed.add(e.key);
-      move(up ? "raise" : "lower");
+      move(up ? "raise" : "lower", e.shiftKey ? FAST_MOVE_MULTIPLIER : 1);
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift") {
+        const dir = currentDirection();
+        if (dir) move(dir);
+        return;
+      }
+
       if (!MOVE_KEYS_UP.has(e.key) && !MOVE_KEYS_DOWN.has(e.key)) return;
       pressed.delete(e.key);
       stop();
@@ -339,7 +361,7 @@ export default function App() {
                       disabled={!connected}
                       onPointerDown={(e) => {
                         e.preventDefault();
-                        move("raise");
+                        move("raise", e.shiftKey ? FAST_MOVE_MULTIPLIER : 1);
                       }}
                       onPointerUp={stop}
                       onPointerLeave={() => moving === "raise" && stop()}
@@ -351,7 +373,7 @@ export default function App() {
                       disabled={!connected}
                       onPointerDown={(e) => {
                         e.preventDefault();
-                        move("lower");
+                        move("lower", e.shiftKey ? FAST_MOVE_MULTIPLIER : 1);
                       }}
                       onPointerUp={stop}
                       onPointerLeave={() => moving === "lower" && stop()}
@@ -437,6 +459,7 @@ export default function App() {
               <p className="hint">
                 Hold <kbd>↑</kbd>/<kbd>W</kbd> to raise, <kbd>↓</kbd>/<kbd>S</kbd>{" "}
                 to lower. Release to stop; buttons work with mouse/touch too.{" "}
+                Hold <kbd>Shift</kbd> for 2x speed. {" "}
                 <strong>Home</strong> drives both up to the top stop and zeroes
                 the encoders. <strong>Go to %</strong> needs a prior home and a
                 calibrated mm/rev; 100% = hard stop (clamped to soft stop).
