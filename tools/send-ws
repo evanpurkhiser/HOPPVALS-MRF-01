@@ -1,0 +1,210 @@
+#!/usr/bin/env node
+
+const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_PATH = "/ws";
+
+function usage() {
+  console.error(`usage: send-ws --ip=<ip> [cmd...]
+       send-ws --url=ws://<host>/ws [cmd...]
+
+Sends one debug-console command to the HV-MRF-01 websocket and prints the reply.
+If cmd is omitted, commands are read from stdin, one line at a time.
+
+Options:
+  --ip <ip>             Device IP or host. Connects to ws://<ip>/ws.
+  --url <url>           Full websocket URL. Overrides --ip.
+  --path <path>         Websocket path for --ip. Defaults to /ws.
+  --timeout <ms>        Open/response timeout. Defaults to ${DEFAULT_TIMEOUT_MS}.
+  -h, --help            Show this help.
+`);
+}
+
+function parseArgs(argv) {
+  const opts = {
+    ip: null,
+    path: DEFAULT_PATH,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    url: null,
+    cmd: [],
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+
+    if (arg === "-h" || arg === "--help") {
+      usage();
+      process.exit(0);
+    }
+
+    if (arg === "--") {
+      opts.cmd = argv.slice(i + 1);
+      break;
+    }
+
+    if (arg === "--ip") {
+      opts.ip = argv[++i] ?? null;
+      continue;
+    }
+
+    if (arg.startsWith("--ip=")) {
+      opts.ip = arg.slice("--ip=".length);
+      continue;
+    }
+
+    if (arg === "--url") {
+      opts.url = argv[++i] ?? null;
+      continue;
+    }
+
+    if (arg.startsWith("--url=")) {
+      opts.url = arg.slice("--url=".length);
+      continue;
+    }
+
+    if (arg === "--path") {
+      opts.path = argv[++i] ?? DEFAULT_PATH;
+      continue;
+    }
+
+    if (arg.startsWith("--path=")) {
+      opts.path = arg.slice("--path=".length);
+      continue;
+    }
+
+    if (arg === "--timeout") {
+      opts.timeoutMs = Number(argv[++i]);
+      continue;
+    }
+
+    if (arg.startsWith("--timeout=")) {
+      opts.timeoutMs = Number(arg.slice("--timeout=".length));
+      continue;
+    }
+
+    opts.cmd = argv.slice(i);
+    break;
+  }
+
+  if (!Number.isFinite(opts.timeoutMs) || opts.timeoutMs <= 0) {
+    throw new Error("--timeout must be a positive number of milliseconds");
+  }
+
+  if (!opts.url && !opts.ip) {
+    throw new Error("missing --ip or --url");
+  }
+
+  return opts;
+}
+
+function websocketUrl(opts) {
+  if (opts.url) return opts.url;
+
+  const path = opts.path.startsWith("/") ? opts.path : `/${opts.path}`;
+  return `ws://${opts.ip}${path}`;
+}
+
+function readStdinLines() {
+  return new Promise((resolve, reject) => {
+    let input = "";
+
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      input += chunk;
+    });
+    process.stdin.on("error", reject);
+    process.stdin.on("end", () => {
+      resolve(input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+    });
+  });
+}
+
+function once(target, event) {
+  return new Promise((resolve) => {
+    target.addEventListener(event, resolve, { once: true });
+  });
+}
+
+async function openSocket(url, timeoutMs) {
+  const ws = new WebSocket(url);
+  let timeout;
+  const timer = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`timeout connecting to ${url}`)), timeoutMs);
+  });
+
+  try {
+    await Promise.race([
+      once(ws, "open"),
+      once(ws, "error").then(() => {
+        throw new Error(`failed to connect to ${url}`);
+      }),
+      timer,
+    ]);
+  } catch (err) {
+    ws.close();
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  return ws;
+}
+
+async function sendCommand(ws, cmd, timeoutMs) {
+  const response = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`timeout waiting for response to: ${cmd}`));
+    }, timeoutMs);
+
+    ws.addEventListener("message", (event) => {
+      clearTimeout(timer);
+      resolve(typeof event.data === "string" ? event.data : String(event.data));
+    }, { once: true });
+
+    ws.addEventListener("close", () => {
+      clearTimeout(timer);
+      reject(new Error("connection closed before response"));
+    }, { once: true });
+
+    ws.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new Error("websocket error while waiting for response"));
+    }, { once: true });
+  });
+
+  ws.send(cmd);
+  return response;
+}
+
+function printResponse(text) {
+  process.stdout.write(text);
+  if (!text.endsWith("\n")) process.stdout.write("\n");
+}
+
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+
+  if (opts.cmd.length === 0 && process.stdin.isTTY) {
+    throw new Error("missing command");
+  }
+
+  const commands = opts.cmd.length > 0 ? [opts.cmd.join(" ")] : await readStdinLines();
+
+  if (commands.length === 0) {
+    throw new Error("missing command and stdin is empty");
+  }
+
+  const ws = await openSocket(websocketUrl(opts), opts.timeoutMs);
+
+  try {
+    for (const cmd of commands) {
+      printResponse(await sendCommand(ws, cmd, opts.timeoutMs));
+    }
+  } finally {
+    ws.close();
+  }
+}
+
+main().catch((err) => {
+  console.error(`send-ws: ${err.message}`);
+  process.exitCode = 1;
+});
