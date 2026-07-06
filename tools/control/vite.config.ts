@@ -5,4 +5,7 @@ import react from "@vitejs/plugin-react";
 // without tripping the mixed-content block that https would.
 export default defineConfig({
   plugins: [react()],
+  server: {
+    allowedHosts: true,
+  },
 });
