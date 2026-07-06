@@ -385,29 +385,29 @@ void control_task(void*)
 // Cover command handlers (registered with the zigbee component)
 //
 // The ZCL Window Covering cluster routes here. The controller owns motor state,
-// so the cover semantics (open = raise, close = lower, go-to = position seek)
-// live with it rather than in the low-level motor driver — which is why the
-// motor component no longer needs to know about zigbee or motion. Open/close
-// speed comes from config::Motion::cover_rpm, re-fittable at runtime. These run
-// in the zigbee task context, so they kick off motion and return immediately.
+// so the cover semantics (open = go to top, close = go to bottom, go-to =
+// position seek) live with it rather than in the low-level motor driver — which
+// is why the motor component no longer needs to know about zigbee or motion.
+// These run in the zigbee task context, so they kick off motion and return
+// immediately.
 
 zigbee::CommandStatus handle_open()
 {
-    const int rpm = config::get().motion.cover_rpm;
-    ESP_LOGI(TAG, "open → raise @ %d RPM", rpm);
-    set_target(rpm, Direction::Raise);
+    if (!begin_go_to_pct(0.0f)) {
+        ESP_LOGW(TAG, "open rejected — not homed / mm_per_rev unset");
+        return zigbee::CommandStatus::Failure;
+    }
+    ESP_LOGI(TAG, "open → go-to 0%%");
     return zigbee::CommandStatus::Success;
 }
 
 zigbee::CommandStatus handle_close()
 {
-    if (!homed.load()) {
-        ESP_LOGW(TAG, "close rejected — not homed; calibrate before lowering");
+    if (!begin_go_to_pct(100.0f)) {
+        ESP_LOGW(TAG, "close rejected — not homed / mm_per_rev unset");
         return zigbee::CommandStatus::Failure;
     }
-    const int rpm = config::get().motion.cover_rpm;
-    ESP_LOGI(TAG, "close → lower @ %d RPM", rpm);
-    set_target(rpm, Direction::Lower);
+    ESP_LOGI(TAG, "close → go-to 100%%");
     return zigbee::CommandStatus::Success;
 }
 
@@ -453,6 +453,10 @@ void set_target(int rpm, Direction d)
         ESP_LOGW(TAG, "set_target ignored — controller faulted; call stop() to clear");
         return;
     }
+    if (homing.load()) {
+        ESP_LOGW(TAG, "set_target ignored — homing in progress");
+        return;
+    }
     // Down travel is unbounded until a home reference exists (no zero to enforce
     // the soft/hard stop against), so refuse to lower while unhomed — only raise
     // is allowed, which is also how the blind gets homed in the first place.
@@ -461,6 +465,10 @@ void set_target(int rpm, Direction d)
         return;
     }
     if (rpm < 0) rpm = 0;
+    target_rpm.store(0);
+    direction.store(Direction::Stop);
+    position_mode.store(false);
+    arrived.store(false);
     target_rpm.store(rpm);
     direction.store(d == Direction::Stop ? Direction::Stop : d);
     ESP_LOGI(TAG, "target = %d RPM, dir = %s",
@@ -630,7 +638,7 @@ PositionPct position_pct()
 bool begin_go_to_mm(float mm, int rpm)
 {
     const auto tune = config::get().motion;
-    if (!homed.load() || tune.mm_per_rev <= 0.0f) {
+    if (fault.load() || homing.load() || !homed.load() || tune.mm_per_rev <= 0.0f) {
         return false;
     }
 
@@ -640,7 +648,8 @@ bool begin_go_to_mm(float mm, int rpm)
     const int cruise = (rpm > 0) ? std::clamp(rpm, 1, 300) : tune.cover_rpm;
 
     // Clean slate, then hand the seek to the control task.
-    fault.store(false);
+    target_rpm.store(0);
+    direction.store(Direction::Stop);
     reset_integrators();
     arrived.store(false);
     target_counts.store(target);
@@ -677,7 +686,9 @@ GoToResult go_to_mm(float mm, int rpm)
         return result(GoToStatus::NotCalibrated);
     }
 
-    begin_go_to_mm(mm, rpm);  // validated above, so this starts the seek
+    if (!begin_go_to_mm(mm, rpm)) {
+        return result(GoToStatus::Faulted);
+    }
 
     // Generous cap: full travel at cover_rpm plus the slow-down tail.
     const int timeout_ticks = 30 * CONTROL_HZ;

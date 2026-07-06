@@ -14,8 +14,9 @@
 // synchronization (C)" for the rationale.
 //
 // Safety: if the count delta between motors exceeds SYNC_FAULT_LIMIT we
-// brake both and enter a faulted state. Subsequent set_target() calls
-// are ignored until stop() clears the fault.
+// brake both and enter a faulted state. Subsequent motion commands are ignored
+// until stop() clears the fault, except home(), which intentionally clears it
+// so calibration can recover from an endpoint/jam fault.
 //
 // Beyond the speed loop, the controller homes against the top hard stop and
 // seeks absolute positions (go_to_mm/pct) with a soft-landing approach that
@@ -26,9 +27,9 @@ namespace hvmrf01::motion {
 
 enum class Direction : std::uint8_t { Raise, Lower, Stop };
 
-// Set the target output-shaft RPM and direction. Thread-safe; the control
-// task picks this up on the next 10 ms tick. RPM is the post-gearbox shaft
-// speed (matches encoder::COUNTS_PER_OUTPUT_REV convention).
+// Debug/manual velocity control: set the target output-shaft RPM and direction.
+// Thread-safe; the control task picks this up on the next 10 ms tick. RPM is the
+// post-gearbox shaft speed (matches encoder::COUNTS_PER_OUTPUT_REV convention).
 //
 // Direction::Stop is equivalent to calling stop() — both motors brake.
 void set_target(int rpm, Direction d);

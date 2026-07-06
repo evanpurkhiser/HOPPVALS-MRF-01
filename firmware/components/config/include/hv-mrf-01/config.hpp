@@ -96,7 +96,7 @@ struct Motion {
     // Stall watchdog trip time: both motors must read stopped this many
     // consecutive milliseconds (while commanded to move) before faulting, so
     // we don't burn the motor against a hard endpoint or jam.
-    int stall_fault_ms = 100;
+    int stall_fault_ms = 500;
 
     // Startup grace: the stall watchdog is suppressed for this long after
     // motion begins, covering motor stiction plus the PI integrator's ramp-up
@@ -142,7 +142,7 @@ struct Motion {
     // goto_min_rpm (a floor so it keeps creeping rather than stalling short);
     // it then brakes once within goto_tol_mm of the target.
     float goto_slow_mm = 70.0f;  // slow-down zone width (~one drum revolution)
-    int   goto_min_rpm = 8;      // floor speed during the approach
+    int   goto_min_rpm = 12;     // floor speed during the approach
     float goto_tol_mm  = 2.0f;   // arrival tolerance — brake within this of target
 };
 
