@@ -37,6 +37,20 @@ export interface ConfigSection {
 // only ever reports "(set)"/"(unset)", never the real value).
 export const SECTIONS: ConfigSection[] = [
   {
+    title: "Device",
+    description: "Identity shown on network and Zigbee surfaces after reboot.",
+    fields: [
+      {
+        key: "device.location",
+        label: "Location",
+        editable: true,
+        kind: "string",
+        description:
+          "Human label for this unit, e.g. Bedroom Right. Used for the WiFi hostname and Zigbee LocationDescription after reboot.",
+      },
+    ],
+  },
+  {
     title: "Travel & Limits",
     description: "Spool calibration and the travel range a move is allowed to cover.",
     fields: [
@@ -298,7 +312,7 @@ export function parseConfig(text: string): ConfigValues {
     if (eq < 0) continue;
     const key = line.slice(0, eq).trim();
     const value = line.slice(eq + 1).trim();
-    if (key) out[key] = value;
+    if (key) out[key] = key === "device.location" && value === "(unset)" ? "" : value;
   }
   return out;
 }

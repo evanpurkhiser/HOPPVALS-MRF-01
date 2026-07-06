@@ -17,6 +17,12 @@ const MOVE_KEYS_UP = new Set(["ArrowUp", "w", "W"]);
 const MOVE_KEYS_DOWN = new Set(["ArrowDown", "s", "S"]);
 const FAST_MOVE_MULTIPLIER = 2;
 
+const configArg = (value: string) => {
+  if (/^\S+$/.test(value)) return value;
+
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+};
+
 export default function App() {
   const clientRef = useRef<DeviceClient | null>(null);
   if (clientRef.current === null) clientRef.current = new DeviceClient();
@@ -252,7 +258,7 @@ export default function App() {
   const save = useCallback(async () => {
     for (const key of dirtyKeys) {
       try {
-        await client.send(`config set ${key} ${edits[key]}`);
+        await client.send(`config set ${key} ${configArg(edits[key])}`);
       } catch {
         return;
       }
