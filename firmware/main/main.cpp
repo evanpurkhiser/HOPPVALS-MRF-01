@@ -11,7 +11,6 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "esp_timer.h"
 
 #include "hv-mrf-01/config.hpp"
@@ -23,6 +22,7 @@
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
 #include "hv-mrf-01/position_report.hpp"
+#include "hv-mrf-01/reboot.hpp"
 #include "hv-mrf-01/utils.hpp"
 #include "hv-mrf-01/zigbee.hpp"
 
@@ -38,45 +38,10 @@ constexpr auto *TAG = "hv-mrf-01.app";
 constexpr std::int64_t RECOVERY_TIMEOUT_US = 5LL * 60 * 1000 * 1000;  // 5 minutes
 esp_timer_handle_t recovery_timer = nullptr;
 
-// Arm the one-shot debug flag and reboot. Halt the control loop and sleep the
-// drivers first so the motors are never mid-drive across the reset.
-//
-// The reset is deferred a beat rather than fired inline: when this runs from the
-// reboot-to-debug ZCL command, the stack still has to transmit the command's
-// Default Response and get its APS ack. Resetting immediately kills the radio
-// first, so the hub sees the command time out ("failed to perform"). The short
-// delay lets the response flush; the recovery-timer path doesn't care about it.
-void do_reset(void *)
-{
-    esp_restart();
-}
-
-void reboot_into_debug(const char *why)
-{
-    static bool rebooting = false;
-
-    ESP_LOGW(TAG, "%s; arming debug boot and rebooting", why);
-    static_cast<void>(hvmrf01::config::request_debug_boot());
-    hvmrf01::motion::stop();
-    hvmrf01::motor::disable();
-
-    if (rebooting) {
-        return;
-    }
-    rebooting = true;
-
-    static esp_timer_handle_t reset_timer = nullptr;
-    const esp_timer_create_args_t args{.callback        = &do_reset,
-                                       .arg             = nullptr,
-                                       .dispatch_method = ESP_TIMER_TASK,
-                                       .name            = "reset"};
-    ESP_ERROR_CHECK(esp_timer_create(&args, &reset_timer));
-    ESP_ERROR_CHECK(esp_timer_start_once(reset_timer, 1000 * 1000));  // 1 s
-}
-
 void enter_debug_recovery(void *)
 {
-    reboot_into_debug("no Zigbee join within recovery window");
+    static_cast<void>(hvmrf01::reboot::async(
+        hvmrf01::reboot::Mode::Debug, "no Zigbee join within recovery window"));
 }
 
 // Bridge the transport-agnostic position reporter to the hub. The reporter
@@ -114,7 +79,8 @@ void on_zigbee_event(void *, esp_event_base_t, std::int32_t id, void *data)
         ESP_LOGI(TAG, "→ identify effect 0x%02x", effect);
     } break;
     case Event::EnterDebug:
-        reboot_into_debug("reboot-to-debug command received");
+        static_cast<void>(hvmrf01::reboot::async(
+            hvmrf01::reboot::Mode::Debug, "reboot-to-debug command received"));
         break;
     case Event::Calibrate:
         ESP_LOGI(TAG, "→ calibrate: homing to top");

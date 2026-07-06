@@ -11,7 +11,6 @@
 #include "esp_console.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -20,6 +19,7 @@
 #include "hv-mrf-01/encoder.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
+#include "hv-mrf-01/reboot.hpp"
 #include "hv-mrf-01/self_test.hpp"
 
 namespace hvmrf01::console {
@@ -684,16 +684,6 @@ int cmd_config(int argc, char** argv)
     return 1;
 }
 
-// Stop the loop and sleep the drivers so the motors aren't mid-drive across
-// the reset, then reboot. Never returns.
-[[noreturn]] void reset_now()
-{
-    hvmrf01::motion::stop();
-    hvmrf01::motor::disable();
-    vTaskDelay(pdMS_TO_TICKS(200));
-    esp_restart();
-}
-
 // Reboot into either radio personality. `debug` arms the one-shot boot flag so
 // the device comes back on WiFi; `normal` clears any armed flag so it returns
 // to Zigbee. No arg defaults to normal.
@@ -702,20 +692,21 @@ int cmd_reboot(int argc, char** argv)
     const char* mode = (argc > 1) ? argv[1] : "normal";
 
     if (std::strcmp(mode, "debug") == 0) {
-        if (auto r = config::request_debug_boot(); !r) {
+        if (auto r = hvmrf01::reboot::async(hvmrf01::reboot::Mode::Debug,
+                                            "CLI reboot command received");
+            !r) {
             emit("failed to arm debug boot (err %d)\n", static_cast<int>(r.error()));
             return 1;
         }
         emit("debug boot armed; rebooting into WiFi debug mode...\n");
-        reset_now();
+        return 0;
     }
 
     if (std::strcmp(mode, "normal") == 0) {
-        // Clear any armed flag so a prior `reboot debug` (e.g. over Zigbee)
-        // doesn't send us back into debug mode.
-        config::take_debug_boot();
+        static_cast<void>(hvmrf01::reboot::async(hvmrf01::reboot::Mode::Normal,
+                                                 "CLI reboot command received"));
         emit("rebooting into normal Zigbee mode...\n");
-        reset_now();
+        return 0;
     }
 
     emit("usage: reboot [normal|debug]\n");
