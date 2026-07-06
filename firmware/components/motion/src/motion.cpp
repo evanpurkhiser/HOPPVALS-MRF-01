@@ -5,7 +5,9 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
+#include "esp_event.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,6 +18,8 @@
 #include "hv-mrf-01/zigbee.hpp"
 
 namespace hvmrf01::motion {
+
+const esp_event_base_t EVENTS = "hvmrf01.motion";
 
 namespace {
 
@@ -129,6 +133,11 @@ void enter_fault()
     active_ticks = 0;
 }
 
+void post(Event ev)
+{
+    esp_event_post(EVENTS, std::to_underlying(ev), nullptr, 0, portMAX_DELAY);
+}
+
 // Effective downward travel limit in mm: the soft stop if one is set, else the
 // hard stop. Both are clamped sane.
 float down_limit_mm(const config::Motion& m)
@@ -191,6 +200,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
             target_rpm.store(0);
             position_mode.store(false);
             arrived.store(true);
+            post(Event::PositionReportRequested);
             stall_ticks  = 0;
             active_ticks = 0;
             for (auto& c : controllers) {
@@ -315,6 +325,7 @@ void run_position_tick(const config::Motion& m)
         reset_integrators();
         position_mode.store(false);
         arrived.store(true);
+        post(Event::PositionReportRequested);
         return;
     }
 
@@ -565,7 +576,11 @@ HomeResult home()
     const HomeResult result{ mtrs[0].done, mtrs[1].done };
     // A valid zero reference exists only if both sides actually settled at the
     // top (encoders were zeroed there).
-    homed.store(result.left && result.right);
+    const bool success = result.left && result.right;
+    homed.store(success);
+    if (success) {
+        post(Event::PositionReportRequested);
+    }
     ESP_LOGI(TAG, "homing done: L=%s R=%s",
              result.left ? "ok" : "TIMEOUT", result.right ? "ok" : "TIMEOUT");
     return result;

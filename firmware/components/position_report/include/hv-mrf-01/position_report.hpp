@@ -6,8 +6,9 @@
 
 // Reports cover position onto the esp_event bus. A low-rate task polls the
 // motion controller for the current lift percentage and posts a PositionChanged
-// event whenever it changes by a percent or a move ends — so any move (open,
-// close, stop, go-to) keeps downstream consumers in sync.
+// event whenever it changes by a percent or a move ends; motion events also
+// trigger immediate reports for motion synchronization points without waiting
+// for the next poll.
 //
 // Transport-agnostic by design: the reporter knows nothing about Zigbee. The
 // application bridges PositionChanged to the hub (zigbee::report_position), so

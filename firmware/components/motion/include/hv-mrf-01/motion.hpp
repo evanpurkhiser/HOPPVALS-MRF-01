@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "esp_event.h"
+
 // Closed-loop velocity controller for the two blind motors.
 //
 // Architecture: a 100 Hz FreeRTOS task samples both encoders, computes
@@ -26,6 +28,14 @@
 namespace hvmrf01::motion {
 
 enum class Direction : std::uint8_t { Raise, Lower, Stop };
+
+// Motion events. Subscribe through esp_event_handler_register().
+ESP_EVENT_DECLARE_BASE(EVENTS);
+
+enum class Event : std::int32_t
+{
+    PositionReportRequested,  // position changed at a known synchronization point
+};
 
 // Debug/manual velocity control: set the target output-shaft RPM and direction.
 // Thread-safe; the control task picks this up on the next 10 ms tick. RPM is the
