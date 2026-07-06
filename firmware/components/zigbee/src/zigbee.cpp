@@ -22,6 +22,7 @@
 #include "ezbee/zcl/cluster/identify.h"
 #include "ezbee/zcl/cluster/identify_desc.h"
 #include "ezbee/zcl/cluster/window_covering_desc.h"
+#include "ezbee/zdo/zdo_dev_srv_disc.h"
 
 namespace hvmrf01::zigbee {
 
@@ -153,6 +154,39 @@ void log_network_info(const char* context) noexcept
              ezb_nwk_get_short_address());
 }
 
+void device_announce_done(const ezb_zdo_device_annce_req_result_t* result, void* user_ctx)
+{
+    const auto* context = static_cast<const char*>(user_ctx);
+    if (result != nullptr && result->error == EZB_ERR_NONE) {
+        ESP_LOGI(TAG, "%s: device announce sent", context);
+        post(Event::JoinedNetwork);
+        return;
+    }
+
+    ESP_LOGW(TAG, "%s: device announce failed (0x%04x); keeping recovery armed", context,
+             result ? result->error : EZB_ERR_FAIL);
+}
+
+void announce_joined_network(const char* context) noexcept
+{
+    if (!ezb_bdb_dev_joined()) {
+        ESP_LOGW(TAG, "%s: BDB says device is not joined; keeping recovery armed", context);
+        return;
+    }
+
+    log_network_info(context);
+
+    const ezb_zdo_device_annce_req_t req{
+        .cb       = &device_announce_done,
+        .user_ctx = const_cast<char*>(context),
+    };
+    const ezb_err_t err = ezb_zdo_device_annce_req(&req);
+    if (err != EZB_ERR_NONE) {
+        ESP_LOGW(TAG, "%s: failed to request device announce (0x%04x); keeping recovery armed",
+                 context, err);
+    }
+}
+
 extern "C" bool signal_handler(const ezb_app_signal_t* app_signal)
 {
     using enum Event;
@@ -174,8 +208,7 @@ extern "C" bool signal_handler(const ezb_app_signal_t* app_signal)
             if (factory_new) {
                 ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_STEERING);
             } else {
-                log_network_info("Rejoining existing network");
-                post(JoinedNetwork);
+                announce_joined_network("Rejoining existing network");
             }
         } else {
             ESP_LOGW(TAG, "%s failed (0x%02x), retrying...", ezb_app_signal_to_string(signal_type),
@@ -188,8 +221,7 @@ extern "C" bool signal_handler(const ezb_app_signal_t* app_signal)
         const auto status =
             *static_cast<const ezb_bdb_comm_status_t*>(ezb_app_signal_get_params(app_signal));
         if (status == EZB_BDB_STATUS_SUCCESS) {
-            log_network_info("Joined network");
-            post(JoinedNetwork);
+            announce_joined_network("Joined network");
         } else {
             ESP_LOGW(TAG, "Network steering failed (0x%02x), retrying in 1s...", status);
             esp_zb_scheduler_alarm(alarm_restart_commissioning, EZB_BDB_MODE_NETWORK_STEERING,
