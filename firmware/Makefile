@@ -1,8 +1,11 @@
 # Wrapper around idf.py so you don't have to source export.sh every time.
-# IDF lives in ~/esp/esp-idf; toolchain in ~/.local/espressif.
+# ESP-IDF and its toolchain live next to the repo, similar to a Python .venv.
 
-IDF_PATH       ?= $(HOME)/esp/esp-idf
-IDF_TOOLS_PATH ?= $(HOME)/.local/espressif
+REPO_ROOT      := $(abspath $(CURDIR)/..)
+IDF_VERSION    ?= v5.3.2
+IDF_REPO       ?= https://github.com/espressif/esp-idf.git
+IDF_PATH       ?= $(REPO_ROOT)/.esp-idf
+IDF_TOOLS_PATH ?= $(REPO_ROOT)/.idf_tools
 TARGET         ?= esp32c6
 # XIAO ESP32-C6 enumerates as a usbmodem* device over native USB-Serial-JTAG.
 # Override with `make flash PORT=/dev/cu.usbmodemXXXX` if auto-detect picks wrong.
@@ -28,10 +31,11 @@ endif
 OTA_BIN ?= build/hv-mrf-01.bin
 OTA_URL  = http://$(IP)/ota$(if $(NORMAL),?normal=1,)
 
-.PHONY: help build flash monitor flash-monitor clean fullclean menuconfig erase set-target size reconfigure shell ota
+.PHONY: help bootstrap build flash monitor flash-monitor clean fullclean menuconfig erase set-target size reconfigure shell ota
 
 help:
 	@echo "Targets:"
+	@echo "  bootstrap      - install ESP-IDF $(IDF_VERSION) + tools into repo-local paths"
 	@echo "  build          - compile firmware"
 	@echo "  flash          - flash firmware over USB-JTAG (PORT=$(PORT))"
 	@echo "  monitor        - attach serial monitor (Ctrl-] to exit)"
@@ -44,6 +48,10 @@ help:
 	@echo "  size           - flash + RAM usage summary"
 	@echo "  set-target     - re-run idf.py set-target $(TARGET) (after big config changes)"
 	@echo "  shell          - drop into a shell with IDF env loaded"
+
+bootstrap:
+	@test -d "$(IDF_PATH)" || git clone --recursive --depth 1 --shallow-submodules -b "$(IDF_VERSION)" "$(IDF_REPO)" "$(IDF_PATH)"
+	@IDF_TOOLS_PATH="$(IDF_TOOLS_PATH)" "$(IDF_PATH)/install.sh" "$(TARGET)"
 
 build:
 	@$(IDF_RUN) idf.py build

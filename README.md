@@ -42,4 +42,34 @@ the head rail and runs the firmware in this repo.
 - [`docs/PCB_DESIGN_OVERVIEW.md`](docs/PCB_DESIGN_OVERVIEW.md) — a walkthrough
   of the controller PCB and its design decisions.
 
+## Building Firmware
+
+The firmware uses ESP-IDF for the `esp32c6` target. The repo keeps the ESP-IDF
+checkout and tools local to the project:
+
+- `.esp-idf/` — ESP-IDF checkout
+- `.idf_tools/` — ESP-IDF toolchains and Python environment
+
+Bootstrap the local toolchain once:
+
+```sh
+make -C firmware bootstrap
+```
+
+Build the firmware:
+
+```sh
+make -C firmware build
+```
+
+Other useful firmware targets:
+
+```sh
+make -C firmware flash PORT=/dev/ttyACM0
+make -C firmware monitor PORT=/dev/ttyACM0
+make -C firmware ota IP=<device-ip>
+```
+
+Run `make -C firmware help` for the full target list.
+
 [hoppvals]: https://www.ikea.com/us/en/p/hoppvals-cellular-blind-white-70431402/
