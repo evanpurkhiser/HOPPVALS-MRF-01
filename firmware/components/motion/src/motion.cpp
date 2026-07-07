@@ -63,6 +63,11 @@ std::atomic<std::int32_t> target_counts{ 0 };
 // (0 from the caller means "use cover_rpm").
 std::atomic<int>          move_rpm{ 0 };
 
+// Cross-task request to clear control-loop-local state. The control task owns
+// the integrators/watchdog counters; callers bump this instead of mutating them
+// directly while the loop may be running.
+std::atomic<std::uint32_t> reset_request_gen{ 0 };
+
 // Consecutive ticks where both motors registered near-zero count delta
 // while we're commanding motion. Resets when motion is detected.
 int stall_ticks = 0;
@@ -120,6 +125,17 @@ void reset_integrators()
     for (auto& c : controllers) c.i_accum = 0.0f;
 }
 
+void reset_motion_state()
+{
+    reset_integrators();
+    stall_ticks  = 0;
+    active_ticks = 0;
+}
+
+void request_motion_state_reset()
+{
+    reset_request_gen.fetch_add(1, std::memory_order_release);
+}
 // Latch a fault and brake: the control task skips ticks until stop() clears it.
 // Callers log the specific cause first.
 void enter_fault()
@@ -128,9 +144,7 @@ void enter_fault()
     direction.store(Direction::Stop);
     position_mode.store(false);
     brake_both();
-    reset_integrators();
-    stall_ticks  = 0;
-    active_ticks = 0;
+    reset_motion_state();
 }
 
 void post(Event ev)
@@ -195,14 +209,12 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
                               (dir == Direction::Lower && dl >= 0 && pos >= dl);
         if (at_limit) {
             brake_both();
-            reset_integrators();
+            reset_motion_state();
             direction.store(Direction::Stop);
             target_rpm.store(0);
             position_mode.store(false);
             arrived.store(true);
             post(Event::PositionReportRequested);
-            stall_ticks  = 0;
-            active_ticks = 0;
             for (auto& c : controllers) {
                 c.prev_count = (c.side == motor::Side::Left) ? count_l : count_r;
             }
@@ -322,7 +334,7 @@ void run_position_tick(const config::Motion& m)
 
     if (std::abs(err) <= tol_counts) {
         motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
-        reset_integrators();
+        reset_motion_state();
         position_mode.store(false);
         arrived.store(true);
         post(Event::PositionReportRequested);
@@ -363,6 +375,7 @@ void control_task(void*)
     // CLI retune gains live without a reboot.
     config::Motion tune = config::get().motion;
     std::uint32_t  tune_gen = config::generation();
+    std::uint32_t  applied_reset_gen = reset_request_gen.load(std::memory_order_acquire);
 
     TickType_t last_wake = xTaskGetTickCount();
     while (true) {
@@ -376,6 +389,12 @@ void control_task(void*)
         if (const auto g = config::generation(); g != tune_gen) {
             tune     = config::get().motion;
             tune_gen = g;
+        }
+
+        if (const auto g = reset_request_gen.load(std::memory_order_acquire);
+            g != applied_reset_gen) {
+            reset_motion_state();
+            applied_reset_gen = g;
         }
 
         // Faulted state is latched — the fault path inside run_tick (or the
@@ -479,6 +498,7 @@ void set_target(int rpm, Direction d)
     target_rpm.store(0);
     direction.store(Direction::Stop);
     position_mode.store(false);
+    request_motion_state_reset();
     arrived.store(false);
     target_rpm.store(rpm);
     direction.store(d == Direction::Stop ? Direction::Stop : d);
@@ -570,8 +590,7 @@ HomeResult home()
 
     // Brake both and hand the motors back to the (idle) control task.
     motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
-    reset_integrators();
-    homing.store(false);
+    reset_motion_state();
 
     const HomeResult result{ mtrs[0].done, mtrs[1].done };
     // A valid zero reference exists only if both sides actually settled at the
@@ -583,6 +602,7 @@ HomeResult home()
     }
     ESP_LOGI(TAG, "homing done: L=%s R=%s",
              result.left ? "ok" : "TIMEOUT", result.right ? "ok" : "TIMEOUT");
+    homing.store(false);
     return result;
 }
 
@@ -665,7 +685,7 @@ bool begin_go_to_mm(float mm, int rpm)
     // Clean slate, then hand the seek to the control task.
     target_rpm.store(0);
     direction.store(Direction::Stop);
-    reset_integrators();
+    request_motion_state_reset();
     arrived.store(false);
     target_counts.store(target);
     move_rpm.store(cruise);
