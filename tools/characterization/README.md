@@ -89,6 +89,16 @@ half** of each run, excluding the spin-up and braking transients.
 ## Notes / caveats
 
 - Runs block the websocket (single-flight) for their duration; that's expected.
+- The firmware `profile` command drives **both motors together** at the same
+  fixed duty. It brakes each side independently once that side reaches the
+  requested rotation count, so the later part of a run may have one side stopped
+  while the other catches up.
+- `profile` resets both encoder counts at the start of each run. After manual
+  profiling, run `home` before interpreting `pos`, `goto`, or percentage
+  commands as absolute positions again.
+- `trace <duration_s> <hz>` is read-only: it streams encoder counts and does not
+  drive motors or reset encoders. Use it alongside `motion`, `goto`, or HA
+  commands when you want to see what the closed-loop controller actually did.
 - If the connection drops mid-run, the device keeps executing the current
   `profile` until its rotation target or `max_s` cap — there's no host
   heartbeat. The runs drive **up** to a hard stop (safe) and **down** within the
