@@ -69,9 +69,12 @@ std::atomic<int>          move_rpm{ 0 };
 // directly while the loop may be running.
 std::atomic<std::uint32_t> reset_request_gen{ 0 };
 
-// Consecutive ticks where both motors registered near-zero count delta
-// while we're commanding motion. Resets when motion is detected.
+// Stall watchdog window. Once startup grace has passed and the controller is
+// applying meaningful duty, both motors must show progress across this window.
 int stall_ticks = 0;
+std::int32_t stall_window_start_l = 0;
+std::int32_t stall_window_start_r = 0;
+Direction stall_window_dir = Direction::Stop;
 // Ticks elapsed since motion became active (since last idle→active edge).
 // Stall watchdog ignores readings until this exceeds the grace window.
 int active_ticks = 0;
@@ -138,7 +141,9 @@ void brake_both()
 
 void reset_integrators()
 {
-    for (auto& c : controllers) c.i_accum = 0.0f;
+    for (auto& c : controllers) {
+        c.i_accum = 0.0f;
+    }
 }
 
 void reset_motion_state()
@@ -146,6 +151,15 @@ void reset_motion_state()
     reset_integrators();
     stall_ticks  = 0;
     active_ticks = 0;
+    stall_window_dir = Direction::Stop;
+}
+
+void reset_stall_window(std::int32_t count_l, std::int32_t count_r, Direction dir)
+{
+    stall_ticks = 0;
+    stall_window_start_l = count_l;
+    stall_window_start_r = count_r;
+    stall_window_dir = dir;
 }
 
 void request_motion_state_reset()
@@ -205,12 +219,15 @@ std::int32_t down_limit_counts(const config::Motion& m)
                                      encoder::COUNTS_PER_OUTPUT_REV / m.mm_per_rev);
 }
 
-// Sign convention for the speed loop: under Raise, both motors should
-// produce positive count delta; under Lower, negative. We pass the
-// "expected sign of count motion" into the loop so the same code handles
-// both directions. The PI controller operates on magnitudes (always
-// non-negative); the H-bridge handles direction via to_mode().
-void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
+// Sign convention for the speed loop: under Raise, counts move negative; under
+// Lower, counts move positive. dir_sign projects measured RPM and sync bias
+// into the commanded reference frame ("positive = moving as requested") so the
+// same PI code handles both directions. The H-bridge handles direction via
+// to_mode().
+void run_tick(const config::Motion& m,
+              Direction dir,
+              int base_setpoint_rpm,
+              bool enforce_travel_limits)
 {
     // Read both encoders up front so cross-coupling sees consistent values.
     const std::int32_t count_l = encoder::count(motor::Side::Left);
@@ -234,7 +251,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
     // (pos 0) going up and at the down limit going down, rather than running
     // into the mechanism and leaning on the stall watchdog. The top needs only
     // the home reference; the down limit also needs mm calibration.
-    if (homed.load()) {
+    if (enforce_travel_limits && homed.load()) {
         const std::int32_t pos = (count_l + count_r) / 2;
         const std::int32_t dl  = down_limit_counts(m);
         const bool at_limit = (dir == Direction::Raise && pos <= 0) ||
@@ -274,30 +291,6 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
                  sync_err, m.sync_fault_limit);
         enter_fault();
         return;
-    }
-
-    // Stall-watchdog: both encoders effectively frozen while we're commanding
-    // motion = we've hit a hard stop (top endpoint, jam, blind hit a wall).
-    // Don't burn the motor against it. Skip during the startup grace window
-    // (motor stiction + PI integral ramp-up takes a moment before counts
-    // start accumulating). Compute deltas here before the PI loop
-    // overwrites prev_count.
-    const std::int32_t delta_l = count_l - controllers[0].prev_count;
-    const std::int32_t delta_r = count_r - controllers[1].prev_count;
-    const int startup_grace_ticks = m.startup_grace_ms / MS_PER_TICK;
-    const int stall_fault_ticks   = m.stall_fault_ms / MS_PER_TICK;
-    if (active_ticks > startup_grace_ticks) {
-        if (std::abs(delta_l) <= m.stall_delta_max && std::abs(delta_r) <= m.stall_delta_max) {
-            if (++stall_ticks >= stall_fault_ticks) {
-                event_log::fault_stall(delta_l, delta_r, base_setpoint_rpm);
-                ESP_LOGW(TAG, "stall fault: both motors stopped %d ms at target %d RPM",
-                         m.stall_fault_ms, base_setpoint_rpm);
-                enter_fault();
-                return;
-            }
-        } else {
-            stall_ticks = 0;
-        }
     }
 
     // Sign of expected count motion per direction. Raise drives Mode::Forward
@@ -343,6 +336,55 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
 
         motor::drive(c.side, to_mode(dir), static_cast<int>(duty));
     }
+
+    // Stall-watchdog: only fault when both motors make essentially no progress
+    // across the configured window while the requested RPM is high enough that
+    // measurable encoder movement should have happened. This avoids false stalls
+    // during very slow moves without disabling jam protection solely because the
+    // controller's current duty is low.
+    const int startup_grace_ticks = m.startup_grace_ms / MS_PER_TICK;
+    const int stall_fault_ticks   = std::max(1, m.stall_fault_ms / MS_PER_TICK);
+    const float stall_window_s = static_cast<float>(m.stall_fault_ms) / 1000.0f;
+    const float expected_counts = static_cast<float>(base_setpoint_rpm) *
+        static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV) * stall_window_s / 60.0f;
+    const int noise_counts = std::max(3, m.stall_delta_max * 3);
+    const int expected_min_progress = std::max(
+        1, static_cast<int>(std::lround(expected_counts * 0.10f)));
+    const int min_progress_counts = std::max(noise_counts, expected_min_progress);
+
+    if (active_ticks <= startup_grace_ticks ||
+        expected_counts <= static_cast<float>(min_progress_counts)) {
+        reset_stall_window(count_l, count_r, dir);
+        return;
+    }
+
+    if (stall_window_dir != dir) {
+        reset_stall_window(count_l, count_r, dir);
+        return;
+    }
+
+    if (stall_ticks == 0) {
+        stall_window_start_l = count_l;
+        stall_window_start_r = count_r;
+        stall_window_dir = dir;
+    }
+
+    if (++stall_ticks < stall_fault_ticks) {
+        return;
+    }
+
+    const std::int32_t delta_l = count_l - stall_window_start_l;
+    const std::int32_t delta_r = count_r - stall_window_start_r;
+    if (std::abs(delta_l) <= min_progress_counts &&
+        std::abs(delta_r) <= min_progress_counts) {
+        event_log::fault_stall(delta_l, delta_r, base_setpoint_rpm);
+        ESP_LOGW(TAG, "stall fault: both motors moved <=%d counts in %d ms at target %d RPM",
+                 min_progress_counts, m.stall_fault_ms, base_setpoint_rpm);
+        enter_fault();
+        return;
+    }
+
+    reset_stall_window(count_l, count_r, dir);
 }
 
 // Convert a distance in mm to encoder counts, falling back to `fallback` when
@@ -356,32 +398,49 @@ std::int32_t mm_to_counts(const config::Motion& m, float mm, std::int32_t fallba
         1, static_cast<std::int32_t>(mm * encoder::COUNTS_PER_OUTPUT_REV / m.mm_per_rev));
 }
 
-// One tick of a position-seek: drive both motors toward target_counts (counts
-// below the homed top) via the synced speed loop, ramping the setpoint down
-// over the final revolution and braking once within tolerance. Reuses run_tick
-// for the actual PI + sync + stall/sync watchdogs, so a hit on the bottom stop
-// faults out exactly as a normal move would.
-void run_position_tick(const config::Motion& m)
+void finish_position_move(std::int32_t target, std::int32_t tolerance_counts)
 {
     const std::int32_t pos = (encoder::count(motor::Side::Left) +
                               encoder::count(motor::Side::Right)) / 2;
-    const std::int32_t err = target_counts.load() - pos;  // >0 ⇒ need to go down
+    event_log::go_to_arrived(pos, target, tolerance_counts);
+    motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
+    reset_motion_state();
+    position_mode.store(false);
+    arrived.store(true);
+    post(Event::PositionReportRequested);
+}
+
+// One tick of a position-seek: drive both motors toward target_counts (counts
+// below the homed top) via the synced speed loop. Normal targets only arrive
+// once both encoders are independently within tolerance, so a tilted average
+// cannot hide skew.
+
+void run_position_tick(const config::Motion& m)
+{
+    const std::int32_t count_l = encoder::count(motor::Side::Left);
+    const std::int32_t count_r = encoder::count(motor::Side::Right);
+    const std::int32_t pos = (count_l + count_r) / 2;
+    const std::int32_t target = target_counts.load();
+    const std::int32_t err = target - pos;  // >0 ⇒ need to go down
 
     const std::int32_t tol_counts  = mm_to_counts(m, m.goto_tol_mm, 24);
     const std::int32_t slow_counts = mm_to_counts(m, m.goto_slow_mm, 896);
+    const std::int32_t err_l = target - count_l;
+    const std::int32_t err_r = target - count_r;
+    const std::int32_t max_side_err = std::max(std::abs(err_l), std::abs(err_r));
 
-    if (std::abs(err) <= tol_counts) {
-        event_log::go_to_arrived(pos, target_counts.load(), tol_counts);
-        motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
-        reset_motion_state();
-        position_mode.store(false);
-        arrived.store(true);
-        post(Event::PositionReportRequested);
+    if (std::abs(err_l) <= tol_counts && std::abs(err_r) <= tol_counts) {
+        finish_position_move(target, tol_counts);
         return;
     }
 
     // Down (lower) increases counts; up (raise) decreases them.
-    const Direction dir = (err > 0) ? Direction::Lower : Direction::Raise;
+    Direction dir = (err > tol_counts) ? Direction::Lower : Direction::Raise;
+    if (std::abs(err) <= tol_counts) {
+        dir = (std::abs(err_l) > std::abs(err_r))
+            ? (err_l > 0 ? Direction::Lower : Direction::Raise)
+            : (err_r > 0 ? Direction::Lower : Direction::Raise);
+    }
 
     // Cruise at the move's chosen speed (set at begin time; fall back to
     // cover_rpm). Ease the setpoint down over the slow-down zone for a soft
@@ -392,12 +451,13 @@ void run_position_tick(const config::Motion& m)
         cruise = m.cover_rpm;
     }
     int setpoint = cruise;
-    const std::int32_t mag = std::abs(err);
+    const std::int32_t mag = std::max(std::abs(err), max_side_err);
+
     if (mag < slow_counts) {
         setpoint = std::max(m.goto_min_rpm, static_cast<int>(cruise * mag / slow_counts));
     }
 
-    run_tick(m, dir, setpoint);
+    run_tick(m, dir, setpoint, false);
 }
 
 void control_task(void*)
@@ -446,7 +506,7 @@ void control_task(void*)
         if (position_mode.load()) {
             run_position_tick(tune);
         } else {
-            run_tick(tune, direction.load(), target_rpm.load());
+            run_tick(tune, direction.load(), target_rpm.load(), true);
         }
     }
 }
@@ -660,6 +720,15 @@ HomeResult home()
     // A valid zero reference exists only if both sides actually settled at the
     // top (encoders were zeroed there).
     const bool success = result.left && result.right;
+    if (success) {
+        // Settling each side independently can leave a few rebound counts after
+        // the final all-motor brake. Make the home reference the actual resting
+        // top position that future go-to-zero commands will target.
+        vTaskDelay(pdMS_TO_TICKS(std::max(1, tune.home_settle_ms)));
+        encoder::reset(motor::Side::Left);
+        encoder::reset(motor::Side::Right);
+    }
+
     homed.store(success);
     if (success) {
         post(Event::PositionReportRequested);
@@ -695,9 +764,8 @@ bool begin_home()
 GoToResult go_to_pct(float pct, int rpm)
 {
     pct = std::clamp(pct, 0.0f, 100.0f);
-    const float hard = config::get().motion.hard_stop_mm;
-    // 100% maps to the hard stop; go_to_mm then clamps to the soft stop.
-    return go_to_mm(pct / 100.0f * hard, rpm);
+    const auto tune = config::get().motion;
+    return go_to_mm(pct / 100.0f * down_limit_mm(tune), rpm);
 }
 
 bool is_homed()
@@ -727,14 +795,15 @@ PositionMm position_mm()
 PositionPct position_pct()
 {
     const auto m = config::get().motion;
-    if (!homed.load() || m.mm_per_rev <= 0.0f || m.hard_stop_mm <= 0.0f) {
+    const float limit = down_limit_mm(m);
+    if (!homed.load() || m.mm_per_rev <= 0.0f || limit <= 0.0f) {
         return PositionPct{ false, 0 };
     }
     const std::int32_t pos = (encoder::count(motor::Side::Left) +
                               encoder::count(motor::Side::Right)) / 2;
     const float mm  = static_cast<float>(pos) * m.mm_per_rev /
                       static_cast<float>(encoder::COUNTS_PER_OUTPUT_REV);
-    const float pct = std::clamp(mm / m.hard_stop_mm * 100.0f, 0.0f, 100.0f);
+    const float pct = std::clamp(mm / limit * 100.0f, 0.0f, 100.0f);
     return PositionPct{ true, static_cast<std::uint8_t>(std::lround(pct)) };
 }
 
@@ -781,7 +850,8 @@ bool begin_go_to_mm(float mm, int rpm)
 bool begin_go_to_pct(float pct, int rpm)
 {
     pct = std::clamp(pct, 0.0f, 100.0f);
-    return begin_go_to_mm(pct / 100.0f * config::get().motion.hard_stop_mm, rpm);
+    const auto tune = config::get().motion;
+    return begin_go_to_mm(pct / 100.0f * down_limit_mm(tune), rpm);
 }
 
 GoToResult go_to_mm(float mm, int rpm)

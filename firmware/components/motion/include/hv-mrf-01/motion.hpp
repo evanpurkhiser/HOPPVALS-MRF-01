@@ -89,17 +89,17 @@ struct GoToResult
 };
 
 // Move both motors to an absolute position `mm` below the homed top, using the
-// synced speed loop, slowing over the final revolution and braking on arrival.
+// synced speed loop, slowing over the final revolution and braking only once
+// both encoders are within tolerance.
 // `rpm` is the cruise speed for the move; 0 uses config cover_rpm. Requires a
 // prior successful home() (the zero reference) and a calibrated config
 // mm_per_rev. Negative mm is clamped to 0 (the top). Blocks until arrival,
 // fault, or the time cap; returns the outcome and final positions.
 GoToResult go_to_mm(float mm, int rpm = 0);
 
-// Convenience over go_to_mm: position as a percentage of full travel, where
-// 100% = config hard_stop_mm. The resulting mm is still clamped to the soft
-// stop inside go_to_mm, so a 100% command on a blind with a soft stop set
-// stops at the soft stop. `rpm` is the cruise speed; 0 uses cover_rpm.
+// Convenience over go_to_mm: position as a percentage of effective travel,
+// where 100% = soft_stop_mm when set, otherwise hard_stop_mm. `rpm` is the
+// cruise speed; 0 uses cover_rpm.
 GoToResult go_to_pct(float pct, int rpm = 0);
 
 // Non-blocking variants for callers that must not block (the Zigbee
@@ -132,8 +132,9 @@ struct PositionMm
 PositionMm position_mm();
 
 // Current cover position as a ZCL lift percentage: 0 = fully open (the homed
-// top), 100 = fully closed (hard_stop_mm down) — the inverse mapping go_to_pct
-// accepts, and the value reported to the hub. Uses the average of both motors.
+// top), 100 = fully closed (effective soft/hard down limit) — the inverse
+// mapping go_to_pct accepts, and the value reported to the hub. Uses the average
+// of both motors.
 // valid is false when there's no usable reference (not homed) or no mm
 // calibration, in which case pct is meaningless. Cheap enough to poll.
 struct PositionPct
