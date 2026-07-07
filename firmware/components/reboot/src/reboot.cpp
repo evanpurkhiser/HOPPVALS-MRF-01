@@ -1,5 +1,7 @@
 #include "hv-mrf-01/reboot.hpp"
 
+#include <atomic>
+
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -18,7 +20,7 @@ constexpr auto* TAG = "hv-mrf-01.reboot";
 // short and surfaced as HA command timeouts.
 constexpr auto  REBOOT_DELAY_US = 5 * 1000 * 1000;
 
-bool rebooting = false;
+std::atomic<bool> rebooting{ false };
 esp_timer_handle_t reset_timer = nullptr;
 
 void do_reset(void*)
@@ -61,10 +63,9 @@ std::expected<void, config::Error> async(Mode mode, const char* why)
     motion::stop();
     motor::disable();
 
-    if (rebooting) {
+    if (rebooting.exchange(true)) {
         return {};
     }
-    rebooting = true;
 
     ensure_timer();
     ESP_ERROR_CHECK(esp_timer_start_once(reset_timer, REBOOT_DELAY_US));
