@@ -108,8 +108,8 @@ void on_tick(TimerHandle_t)
 
 void start_effect(Effect e)
 {
-    current_effect.store(e);
     elapsed_ms.store(0);
+    current_effect.store(e);
     if (e == Effect::None) {
         write_brightness(0);
     }
