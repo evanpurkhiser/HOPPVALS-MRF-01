@@ -423,6 +423,12 @@ void control_task(void*)
 
 zigbee::CommandStatus handle_open()
 {
+    if (!is_homed()) {
+        const bool started = begin_home();
+        ESP_LOGI(TAG, "open while unhomed -> %s", started ? "homing" : "homing already active");
+        return zigbee::CommandStatus::Success;
+    }
+
     if (!begin_go_to_pct(0.0f)) {
         ESP_LOGW(TAG, "open rejected — not homed / mm_per_rev unset");
         return zigbee::CommandStatus::Failure;
@@ -433,6 +439,12 @@ zigbee::CommandStatus handle_open()
 
 zigbee::CommandStatus handle_close()
 {
+    if (!is_homed()) {
+        const bool started = begin_home();
+        ESP_LOGI(TAG, "close while unhomed -> %s", started ? "homing" : "homing already active");
+        return zigbee::CommandStatus::Success;
+    }
+
     if (!begin_go_to_pct(100.0f)) {
         ESP_LOGW(TAG, "close rejected — not homed / mm_per_rev unset");
         return zigbee::CommandStatus::Failure;
@@ -459,6 +471,13 @@ zigbee::CommandStatus handle_go_to(std::uint8_t pct)
     // tracks truth rather than the (optimistic) commanded target. Reporting from
     // this callback would also deadlock — report_position takes the stack lock
     // this handler already holds.
+    if (!is_homed()) {
+        const bool started = begin_home();
+        ESP_LOGI(TAG, "go-to %u%% while unhomed -> %s", pct,
+                 started ? "homing" : "homing already active");
+        return zigbee::CommandStatus::Success;
+    }
+
     if (!begin_go_to_pct(static_cast<float>(pct))) {
         ESP_LOGW(TAG, "go-to %u%% rejected (not homed / mm_per_rev unset)", pct);
         return zigbee::CommandStatus::Failure;
