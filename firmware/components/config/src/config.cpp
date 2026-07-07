@@ -35,16 +35,32 @@ constexpr auto* KEY_DEBUG_BOOT = "dbg_boot";
 
 std::atomic<const Config*> active{ nullptr };
 std::atomic<std::uint32_t> gen{ 0 };
+std::atomic_flag           slot_lock = ATOMIC_FLAG_INIT;
 Config                     slots[2]{};
 int                        write_slot = 0;
 
 // Compile-time defaults, returned by get() before init() has published.
 const Config defaults{};
 
+class SlotLock
+{
+  public:
+    SlotLock() noexcept
+    {
+        while (slot_lock.test_and_set(std::memory_order_acquire)) {
+        }
+    }
+
+    ~SlotLock() noexcept { slot_lock.clear(std::memory_order_release); }
+    SlotLock(const SlotLock&)            = delete;
+    SlotLock& operator=(const SlotLock&) = delete;
+};
+
 void publish(const Config& cfg)
 {
+    SlotLock lock;
     slots[write_slot] = cfg;
-    active.store(&slots[write_slot], std::memory_order_release);
+    active.store(&slots[write_slot], std::memory_order_relaxed);
     write_slot ^= 1;
     gen.fetch_add(1, std::memory_order_release);
 }
@@ -277,10 +293,10 @@ std::expected<void, Error> init()
 
 Config get()
 {
-    // Copy under the acquire-loaded pointer: the slot can be recycled by a
-    // later publish(), but the copy completes against a consistent snapshot
-    // (publish() never mutates a slot in place, only swaps the active pointer).
-    const Config* p = active.load(std::memory_order_acquire);
+    // Copy while publication is excluded: the active pointer is stable, and the
+    // slot it references cannot be recycled until the snapshot is complete.
+    SlotLock lock;
+    const Config* p = active.load(std::memory_order_relaxed);
     return p ? *p : defaults;
 }
 
