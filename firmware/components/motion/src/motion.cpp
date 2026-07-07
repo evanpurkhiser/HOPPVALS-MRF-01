@@ -14,6 +14,7 @@
 
 #include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/encoder.hpp"
+#include "hv-mrf-01/event_log.hpp"
 #include "hv-mrf-01/motor.hpp"
 #include "hv-mrf-01/zigbee.hpp"
 
@@ -115,6 +116,21 @@ motor::Mode to_mode(Direction d)
     return motor::Mode::Brake;
 }
 
+event_log::MotionDirection log_direction(Direction d)
+{
+    switch (d) {
+    case Direction::Raise: return event_log::MotionDirection::Raise;
+    case Direction::Lower: return event_log::MotionDirection::Lower;
+    case Direction::Stop:  return event_log::MotionDirection::Stop;
+    }
+    return event_log::MotionDirection::Stop;
+}
+
+event_log::Side log_side(motor::Side s)
+{
+    return s == motor::Side::Left ? event_log::Side::Left : event_log::Side::Right;
+}
+
 void brake_both()
 {
     motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
@@ -136,6 +152,22 @@ void request_motion_state_reset()
 {
     reset_request_gen.fetch_add(1, std::memory_order_release);
 }
+
+void stop_with_source(event_log::StopSource source)
+{
+    event_log::motion_stop(source,
+                           fault.load(), position_mode.load(), homing.load());
+    target_rpm.store(0);
+    direction.store(Direction::Stop);
+    position_mode.store(false);
+    fault.store(false);
+    request_motion_state_reset();
+    // The control task picks up the new state on the next tick; brake
+    // immediately here so the motors don't keep coasting through that
+    // (≤10 ms) window.
+    motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
+}
+
 // Latch a fault and brake: the control task skips ticks until stop() clears it.
 // Callers log the specific cause first.
 void enter_fault()
@@ -208,6 +240,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
         const bool at_limit = (dir == Direction::Raise && pos <= 0) ||
                               (dir == Direction::Lower && dl >= 0 && pos >= dl);
         if (at_limit) {
+            event_log::limit_stop(log_direction(dir), pos, dl);
             brake_both();
             reset_motion_state();
             direction.store(Direction::Stop);
@@ -225,6 +258,9 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
     // We're actively driving. Count time since the most recent idle→active
     // edge so the stall watchdog can skip the spin-up window.
     ++active_ticks;
+    if (active_ticks == 1) {
+        event_log::motion_drive_start(log_direction(dir), base_setpoint_rpm, count_l, count_r);
+    }
 
     // Sync-watchdog: gross divergence while *actively* controlling → fault,
     // brake once, latch. Only meaningful when the controller is driving;
@@ -232,6 +268,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
     // expected and not a fault.
     const int sync_err = std::abs(count_l - count_r);
     if (sync_err > m.sync_fault_limit) {
+        event_log::fault_sync(count_l, count_r, sync_err);
         ESP_LOGW(TAG, "sync fault: |%ld - %ld| = %d > %d; braking",
                  static_cast<long>(count_l), static_cast<long>(count_r),
                  sync_err, m.sync_fault_limit);
@@ -252,6 +289,7 @@ void run_tick(const config::Motion& m, Direction dir, int base_setpoint_rpm)
     if (active_ticks > startup_grace_ticks) {
         if (std::abs(delta_l) <= m.stall_delta_max && std::abs(delta_r) <= m.stall_delta_max) {
             if (++stall_ticks >= stall_fault_ticks) {
+                event_log::fault_stall(delta_l, delta_r, base_setpoint_rpm);
                 ESP_LOGW(TAG, "stall fault: both motors stopped %d ms at target %d RPM",
                          m.stall_fault_ms, base_setpoint_rpm);
                 enter_fault();
@@ -333,6 +371,7 @@ void run_position_tick(const config::Motion& m)
     const std::int32_t slow_counts = mm_to_counts(m, m.goto_slow_mm, 896);
 
     if (std::abs(err) <= tol_counts) {
+        event_log::go_to_arrived(pos, target_counts.load(), tol_counts);
         motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
         reset_motion_state();
         position_mode.store(false);
@@ -423,6 +462,7 @@ void control_task(void*)
 
 zigbee::CommandStatus handle_open()
 {
+    event_log::motion_open(is_homed());
     if (!is_homed()) {
         const bool started = begin_home();
         ESP_LOGI(TAG, "open while unhomed -> %s", started ? "homing" : "homing already active");
@@ -430,6 +470,7 @@ zigbee::CommandStatus handle_open()
     }
 
     if (!begin_go_to_pct(0.0f)) {
+        event_log::motion_reject(event_log::RejectReason::GoToBeginFailed, 0);
         ESP_LOGW(TAG, "open rejected — not homed / mm_per_rev unset");
         return zigbee::CommandStatus::Failure;
     }
@@ -439,6 +480,7 @@ zigbee::CommandStatus handle_open()
 
 zigbee::CommandStatus handle_close()
 {
+    event_log::motion_close(is_homed());
     if (!is_homed()) {
         const bool started = begin_home();
         ESP_LOGI(TAG, "close while unhomed -> %s", started ? "homing" : "homing already active");
@@ -446,6 +488,7 @@ zigbee::CommandStatus handle_close()
     }
 
     if (!begin_go_to_pct(100.0f)) {
+        event_log::motion_reject(event_log::RejectReason::GoToBeginFailed, 100);
         ESP_LOGW(TAG, "close rejected — not homed / mm_per_rev unset");
         return zigbee::CommandStatus::Failure;
     }
@@ -456,7 +499,7 @@ zigbee::CommandStatus handle_close()
 zigbee::CommandStatus handle_stop()
 {
     ESP_LOGI(TAG, "stop");
-    stop();
+    stop_with_source(event_log::StopSource::Cover);
     return zigbee::CommandStatus::Success;
 }
 
@@ -471,6 +514,7 @@ zigbee::CommandStatus handle_go_to(std::uint8_t pct)
     // tracks truth rather than the (optimistic) commanded target. Reporting from
     // this callback would also deadlock — report_position takes the stack lock
     // this handler already holds.
+    event_log::motion_go_to(pct, is_homed());
     if (!is_homed()) {
         const bool started = begin_home();
         ESP_LOGI(TAG, "go-to %u%% while unhomed -> %s", pct,
@@ -479,6 +523,7 @@ zigbee::CommandStatus handle_go_to(std::uint8_t pct)
     }
 
     if (!begin_go_to_pct(static_cast<float>(pct))) {
+        event_log::motion_reject(event_log::RejectReason::GoToBeginFailed, pct);
         ESP_LOGW(TAG, "go-to %u%% rejected (not homed / mm_per_rev unset)", pct);
         return zigbee::CommandStatus::Failure;
     }
@@ -499,10 +544,12 @@ void home_task(void*)
 void set_target(int rpm, Direction d)
 {
     if (fault.load()) {
+        event_log::motion_reject(event_log::RejectReason::Faulted, rpm, log_direction(d));
         ESP_LOGW(TAG, "set_target ignored — controller faulted; call stop() to clear");
         return;
     }
     if (homing.load()) {
+        event_log::motion_reject(event_log::RejectReason::Homing, rpm, log_direction(d));
         ESP_LOGW(TAG, "set_target ignored — homing in progress");
         return;
     }
@@ -510,6 +557,7 @@ void set_target(int rpm, Direction d)
     // the soft/hard stop against), so refuse to lower while unhomed — only raise
     // is allowed, which is also how the blind gets homed in the first place.
     if (d == Direction::Lower && !homed.load()) {
+        event_log::motion_reject(event_log::RejectReason::LowerUnhomed, rpm, log_direction(d));
         ESP_LOGW(TAG, "lower ignored — not homed; raise or calibrate first");
         return;
     }
@@ -521,6 +569,7 @@ void set_target(int rpm, Direction d)
     arrived.store(false);
     target_rpm.store(rpm);
     direction.store(d == Direction::Stop ? Direction::Stop : d);
+    event_log::motion_target(rpm, log_direction(d));
     ESP_LOGI(TAG, "target = %d RPM, dir = %s",
              rpm,
              d == Direction::Raise ? "raise" :
@@ -529,14 +578,7 @@ void set_target(int rpm, Direction d)
 
 void stop()
 {
-    target_rpm.store(0);
-    direction.store(Direction::Stop);
-    position_mode.store(false);
-    fault.store(false);
-    // The control task picks up the new state on the next tick; brake
-    // immediately here so the motors don't keep coasting through that
-    // (≤10 ms) window.
-    motor::drive(motor::Side::Both, motor::Mode::Brake, 0);
+    stop_with_source(event_log::StopSource::Controller);
 }
 
 HomeResult home()
@@ -571,6 +613,7 @@ HomeResult home()
 
     ESP_LOGI(TAG, "homing: up at %d%% duty, settle %d ms, timeout %d s",
              duty, tune.home_settle_ms, tune.home_timeout_s);
+    event_log::home_start(duty, tune.home_settle_ms, tune.home_timeout_s);
 
     TickType_t wake = xTaskGetTickCount();
     for (int t = 0; t < timeout_ticks; ++t) {
@@ -589,9 +632,11 @@ HomeResult home()
 
             if (std::abs(delta) <= stopped_max) {
                 if (++m.stopped >= settle_ticks) {
+                    const std::int32_t settled_at = now;
                     motor::drive(m.side, motor::Mode::Brake, 0);
                     encoder::reset(m.side);
                     m.done = true;
+                    event_log::home_settled(log_side(m.side), settled_at);
                     ESP_LOGI(TAG, "homing: %s settled at top", m.label);
                     continue;
                 }
@@ -619,6 +664,7 @@ HomeResult home()
     if (success) {
         post(Event::PositionReportRequested);
     }
+    event_log::home_done(success, result.left, result.right);
     ESP_LOGI(TAG, "homing done: L=%s R=%s",
              result.left ? "ok" : "TIMEOUT", result.right ? "ok" : "TIMEOUT");
     homing.store(false);
@@ -632,12 +678,15 @@ bool begin_home()
     // already running is a no-op rather than two runs fighting for the motors.
     bool expected = false;
     if (!homing.compare_exchange_strong(expected, true)) {
+        event_log::home_begin(event_log::HomeBeginResult::AlreadyRunning);
         return false;
     }
+    event_log::home_begin(event_log::HomeBeginResult::Claimed);
     const BaseType_t ok =
         xTaskCreate(&home_task, "home", STACK_SZ, nullptr, TASK_PRIO, nullptr);
     if (ok != pdPASS) {
         homing.store(false);
+        event_log::home_begin(event_log::HomeBeginResult::TaskCreateFailed);
         return false;
     }
     return true;
@@ -692,7 +741,20 @@ PositionPct position_pct()
 bool begin_go_to_mm(float mm, int rpm)
 {
     const auto tune = config::get().motion;
-    if (fault.load() || homing.load() || !homed.load() || tune.mm_per_rev <= 0.0f) {
+    if (fault.load()) {
+        event_log::motion_reject(event_log::RejectReason::GoToFaulted);
+        return false;
+    }
+    if (homing.load()) {
+        event_log::motion_reject(event_log::RejectReason::GoToHoming);
+        return false;
+    }
+    if (!homed.load()) {
+        event_log::motion_reject(event_log::RejectReason::GoToUnhomed);
+        return false;
+    }
+    if (tune.mm_per_rev <= 0.0f) {
+        event_log::motion_reject(event_log::RejectReason::GoToNotCalibrated);
         return false;
     }
 
@@ -709,6 +771,7 @@ bool begin_go_to_mm(float mm, int rpm)
     target_counts.store(target);
     move_rpm.store(cruise);
     position_mode.store(true);
+    event_log::go_to_begin(target, cruise, mm);
 
     ESP_LOGI(TAG, "go_to %.1f mm (target %ld counts) @ %d RPM",
              mm, static_cast<long>(target), cruise);
@@ -761,6 +824,7 @@ GoToResult go_to_mm(float mm, int rpm)
                         : fault.load()   ? GoToStatus::Faulted
                                          : GoToStatus::Timeout;
     const auto r = result(st);
+    event_log::go_to_done(static_cast<std::uint8_t>(st), r.mm_l, r.mm_r);
     ESP_LOGI(TAG, "go_to done: status=%d L=%.1fmm R=%.1fmm",
              static_cast<int>(st), r.mm_l, r.mm_r);
     return r;

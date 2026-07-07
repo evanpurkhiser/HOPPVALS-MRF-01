@@ -1,6 +1,7 @@
 #include "hv-mrf-01/zigbee.hpp"
 
 #include "hv-mrf-01/config.hpp"
+#include "hv-mrf-01/event_log.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -299,6 +300,10 @@ CommandStatus dispatch_cover_command(std::uint8_t cmd_id,
 void handle_window_covering(ezb_zcl_window_covering_movement_message_t* msg) noexcept
 {
     const std::uint8_t cmd_id = msg->in.header ? msg->in.header->cmd_id : 0xFF;
+    const std::uint8_t pct = cmd_id == EZB_ZCL_CMD_WINDOW_COVERING_GO_TO_LIFT_PERCENTAGE_ID
+                                 ? msg->in.payload.lift_percentage
+                                 : 0;
+    event_log::zigbee_cover_received(cmd_id, pct);
 
     // Map known commands to readable names just for the log line.
     const char* name = "?";
@@ -310,12 +315,11 @@ void handle_window_covering(ezb_zcl_window_covering_movement_message_t* msg) noe
     }
 
     const auto status = dispatch_cover_command(cmd_id, msg);
+    event_log::zigbee_cover_status(cmd_id, static_cast<int>(status), pct);
     ESP_LOGI(TAG, "Cover: %s%s%d%s → status 0x%02x",
              name,
              cmd_id == EZB_ZCL_CMD_WINDOW_COVERING_GO_TO_LIFT_PERCENTAGE_ID ? "(" : "",
-             cmd_id == EZB_ZCL_CMD_WINDOW_COVERING_GO_TO_LIFT_PERCENTAGE_ID
-                 ? msg->in.payload.lift_percentage
-                 : 0,
+             pct,
              cmd_id == EZB_ZCL_CMD_WINDOW_COVERING_GO_TO_LIFT_PERCENTAGE_ID ? "%)" : "",
              static_cast<unsigned>(status));
 
@@ -421,14 +425,17 @@ extern "C" ezb_zcl_status_t config_cluster_process_cmd(const ezb_zcl_cmd_hdr_t* 
 
     switch (hdr->cmd_id) {
     case CMD_REBOOT_DEBUG:
+        event_log::zigbee_config_command(hdr->cmd_id, CLUSTER_CONFIG);
         ESP_LOGI(TAG, "Config cmd: reboot into debug mode");
         post(Event::EnterDebug);
         return EZB_ZCL_STATUS_SUCCESS;
     case CMD_CALIBRATE:
+        event_log::zigbee_config_command(hdr->cmd_id, CLUSTER_CONFIG);
         ESP_LOGI(TAG, "Config cmd: calibrate (home to top)");
         post(Event::Calibrate);
         return EZB_ZCL_STATUS_SUCCESS;
     default:
+        event_log::zigbee_config_command(hdr->cmd_id, CLUSTER_CONFIG, true);
         ESP_LOGW(TAG, "Config cmd: unsupported 0x%02x", hdr->cmd_id);
         return EZB_ZCL_STATUS_UNSUP_CMD;
     }
@@ -704,6 +711,7 @@ void report_position(std::uint8_t pct)
         EZB_ZCL_ATTR_WINDOW_COVERING_CURRENT_POSITION_LIFT_PERCENTAGE_ID,
         EZB_ZCL_STD_MANUF_CODE, &pct, /*check_access=*/false);
     if (status != EZB_ZCL_STATUS_SUCCESS) {
+        event_log::zigbee_cover_status(0xFE, status, pct);
         ESP_LOGW(TAG, "report_position(%u): set_attr status 0x%02x", pct, status);
     }
 }

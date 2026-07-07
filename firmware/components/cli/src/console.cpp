@@ -18,6 +18,7 @@
 #include "hv-mrf-01/config.hpp"
 #include "hv-mrf-01/current_sense.hpp"
 #include "hv-mrf-01/encoder.hpp"
+#include "hv-mrf-01/event_log.hpp"
 #include "hv-mrf-01/motion.hpp"
 #include "hv-mrf-01/motor.hpp"
 #include "hv-mrf-01/reboot.hpp"
@@ -728,6 +729,7 @@ int cmd_debug(int, char**)
 // Forward-declared so they can appear in the command table.
 int cmd_help(int argc, char** argv);
 int cmd_version(int argc, char** argv);
+int cmd_eventlog(int argc, char** argv);
 int cmd_home(int argc, char** argv);
 int cmd_profile(int argc, char** argv);
 int cmd_goto(int argc, char** argv);
@@ -762,6 +764,7 @@ const esp_console_cmd_t COMMANDS[] = {
         {.command = "pos",    .help = "Print current position (mm below the homed top)",   .hint = nullptr, .func = &cmd_pos, .argtable = nullptr},
         {.command = "profile",.help = "Open-loop both-motor drive; stream pos+current CSV", .hint = "<up|down> <duty> <rotations> [hz] [max_s]", .func = &cmd_profile, .argtable = nullptr},
         {.command = "selftest",.help = "Automated motor/encoder/current self-test (PASS/FAIL)", .hint = "[L|R|both]", .func = &cmd_selftest, .argtable = nullptr},
+        {.command = "eventlog",.help = "Dump or clear recent motion/Zigbee events",          .hint = "[raw|clear]", .func = &cmd_eventlog, .argtable = nullptr},
         {.command = "version",.help = "Print firmware build identity",                    .hint = nullptr, .func = &cmd_version, .argtable = nullptr},
         {.command = "help",   .help = "List available commands",                           .hint = nullptr, .func = &cmd_help,   .argtable = nullptr},
 };
@@ -793,6 +796,203 @@ int cmd_version(int, char**)
         emit("%02x", byte);
     }
     emit("\n");
+
+    return 0;
+}
+
+const char* zcl_cover_cmd_name(std::uint8_t cmd)
+{
+    switch (cmd) {
+    case 0x00: return "open";
+    case 0x01: return "close";
+    case 0x02: return "stop";
+    case 0x05: return "go_to_pct";
+    case 0xFE: return "position_report";
+    default:   return "unknown";
+    }
+}
+
+const char* zcl_status_name(std::int32_t status)
+{
+    switch (status) {
+    case 0x00: return "success";
+    case 0x01: return "failure";
+    case 0x81: return "unsupported_command";
+    case 0x87: return "invalid_value";
+    case 0x8b: return "not_found";
+    case 0xc2: return "not_calibrated";
+    default:   return "unknown";
+    }
+}
+
+const char* direction_name(std::int32_t dir)
+{
+    switch (static_cast<hvmrf01::event_log::MotionDirection>(dir)) {
+    case hvmrf01::event_log::MotionDirection::Raise: return "raise";
+    case hvmrf01::event_log::MotionDirection::Lower: return "lower";
+    case hvmrf01::event_log::MotionDirection::Stop:  return "stop";
+    }
+    return "unknown";
+}
+
+const char* go_to_status_name(std::uint8_t status)
+{
+    switch (static_cast<hvmrf01::motion::GoToStatus>(status)) {
+    case hvmrf01::motion::GoToStatus::Arrived:       return "arrived";
+    case hvmrf01::motion::GoToStatus::NotHomed:      return "not_homed";
+    case hvmrf01::motion::GoToStatus::NotCalibrated: return "not_calibrated";
+    case hvmrf01::motion::GoToStatus::Faulted:       return "faulted";
+    case hvmrf01::motion::GoToStatus::Timeout:       return "timeout";
+    }
+    return "unknown";
+}
+
+const char* reject_reason_name(std::uint8_t reason)
+{
+    switch (reason) {
+    case 1: return "faulted";
+    case 2: return "homing";
+    case 3: return "lower_unhomed";
+    case 4: return "goto_begin_failed";
+    case 5: return "goto_faulted";
+    case 6: return "goto_homing";
+    case 7: return "goto_unhomed";
+    case 8: return "goto_not_calibrated";
+    default: return "unknown";
+    }
+}
+
+void emit_event_fields(const hvmrf01::event_log::Record& r)
+{
+    using enum hvmrf01::event_log::Event;
+
+    switch (r.event) {
+    case ZigbeeCoverRx:
+        emit("cmd=%s pct=%ld", zcl_cover_cmd_name(r.detail), static_cast<long>(r.a));
+        return;
+    case ZigbeeCoverStatus:
+        emit("cmd=%s status=%s(0x%02lx) pct=%ld", zcl_cover_cmd_name(r.detail),
+             zcl_status_name(r.a), static_cast<unsigned long>(r.a), static_cast<long>(r.b));
+        return;
+    case ZigbeeConfigCmd:
+        emit("cmd=0x%02x cluster=0x%04lx unsupported=%ld",
+             static_cast<unsigned>(r.detail), static_cast<unsigned long>(r.a), static_cast<long>(r.b));
+        return;
+    case MotionOpen:
+    case MotionClose:
+        emit("homed=%ld", static_cast<long>(r.a));
+        return;
+    case MotionGoTo:
+        emit("pct=%ld homed=%ld", static_cast<long>(r.a), static_cast<long>(r.b));
+        return;
+    case MotionStop:
+        emit("source=%s faulted=%ld position_mode=%ld homing=%ld",
+             r.detail == 0 ? "cover" : "controller",
+             static_cast<long>(r.a), static_cast<long>(r.b), static_cast<long>(r.c));
+        return;
+    case MotionSetTarget:
+        emit("rpm=%ld dir=%s", static_cast<long>(r.a), direction_name(r.b));
+        return;
+    case MotionDriveStart:
+        emit("dir=%s rpm=%ld count_l=%ld count_r=%ld",
+             r.detail ? "lower" : "raise", static_cast<long>(r.a),
+             static_cast<long>(r.b), static_cast<long>(r.c));
+        return;
+    case MotionReject:
+        emit("reason=%s rpm_or_pct=%ld dir=%s", reject_reason_name(r.detail),
+             static_cast<long>(r.a), direction_name(r.b));
+        return;
+    case HomeBegin:
+        emit("result=%s", r.detail == 0 ? "claimed" : r.detail == 1 ? "already_running" : "task_create_failed");
+        return;
+    case HomeStart:
+        emit("duty_pct=%ld settle_ms=%ld timeout_s=%ld",
+             static_cast<long>(r.a), static_cast<long>(r.b), static_cast<long>(r.c));
+        return;
+    case HomeSettled:
+        emit("side=%s count_before_reset=%ld", r.detail == 0 ? "left" : "right", static_cast<long>(r.a));
+        return;
+    case HomeDone:
+        emit("success=%u left=%ld right=%ld", static_cast<unsigned>(r.detail),
+             static_cast<long>(r.a), static_cast<long>(r.b));
+        return;
+    case GoToBegin:
+        emit("target_counts=%ld rpm=%ld target_mm=%.1f",
+             static_cast<long>(r.a), static_cast<long>(r.b), static_cast<double>(r.c) / 10.0);
+        return;
+    case GoToArrived:
+        emit("pos_counts=%ld target_counts=%ld tolerance_counts=%ld",
+             static_cast<long>(r.a), static_cast<long>(r.b), static_cast<long>(r.c));
+        return;
+    case GoToDone:
+        emit("status=%s left_mm=%.1f right_mm=%.1f", go_to_status_name(r.detail),
+             static_cast<double>(r.a) / 10.0, static_cast<double>(r.b) / 10.0);
+        return;
+    case LimitStop:
+        emit("dir=%s pos_counts=%ld down_limit_counts=%ld",
+             r.detail ? "lower" : "raise", static_cast<long>(r.a), static_cast<long>(r.b));
+        return;
+    case FaultSync:
+        emit("count_l=%ld count_r=%ld sync_err=%ld",
+             static_cast<long>(r.a), static_cast<long>(r.b), static_cast<long>(r.c));
+        return;
+    case FaultStall:
+        emit("delta_l=%ld delta_r=%ld rpm=%ld",
+             static_cast<long>(r.a), static_cast<long>(r.b), static_cast<long>(r.c));
+        return;
+    }
+}
+
+int cmd_eventlog(int argc, char** argv)
+{
+    using hvmrf01::event_log::Record;
+
+    if (argc > 1 && std::string_view{argv[1]} == "clear") {
+        hvmrf01::event_log::clear();
+        emit("eventlog cleared\n");
+        return 0;
+    }
+    const bool raw = argc > 1 && std::string_view{argv[1]} == "raw";
+    if (argc > 1 && !raw) {
+        emit("usage: eventlog [raw|clear]\n");
+        return 1;
+    }
+
+    const auto range = hvmrf01::event_log::range();
+    emit("EVENTLOG count=%u capacity=%u record_bytes=%u\n",
+         static_cast<unsigned>(range.count),
+         static_cast<unsigned>(hvmrf01::event_log::CAPACITY),
+         static_cast<unsigned>(sizeof(Record)));
+    if (raw) {
+        emit("seq,t_ms,event,detail,a,b,c\n");
+    }
+
+    for (std::uint32_t i = 0; i < range.count; ++i) {
+        Record r{};
+        const auto seq = range.first_seq + i;
+        if (!hvmrf01::event_log::get_seq(seq, r)) {
+            emit("%lu overwritten during dump\n", static_cast<unsigned long>(seq));
+            continue;
+        }
+        if (raw) {
+            emit("%lu,%lu,%s,%u,%ld,%ld,%ld\n",
+                 static_cast<unsigned long>(r.seq),
+                 static_cast<unsigned long>(pdTICKS_TO_MS(r.tick)),
+                 hvmrf01::event_log::event_name(r.event),
+                 static_cast<unsigned>(r.detail),
+                 static_cast<long>(r.a),
+                 static_cast<long>(r.b),
+                 static_cast<long>(r.c));
+            continue;
+        }
+
+        emit("%lu t=%lums %-20s ",
+             static_cast<unsigned long>(r.seq),
+             static_cast<unsigned long>(pdTICKS_TO_MS(r.tick)),
+             hvmrf01::event_log::event_name(r.event));
+        emit_event_fields(r);
+        emit("\n");
+    }
 
     return 0;
 }
