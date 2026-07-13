@@ -120,7 +120,9 @@ def measure(con, args, trim_r):
         for r in out.splitlines()
         if r and r[0].isdigit() and "," in r
     ]
-    cruise = [l - r for (t, l, r) in rows if t >= args.cruise_start_ms]
+    cruise = [
+        left - right for (time, left, right) in rows if time >= args.cruise_start_ms
+    ]
     if not cruise:
         return None
     return statistics.mean(cruise)
@@ -135,8 +137,10 @@ def tune(con, args):
         print(f"  ff_trim_r={trim:.3f}  ->  mean(L-R)={m:+.1f} counts")
         return m
 
-    print(f"tuning ff_trim_r (rpm={args.rpm}, dir={args.dir}, "
-          f"target |mean|<{args.target} counts)")
+    print(
+        f"tuning ff_trim_r (rpm={args.rpm}, dir={args.dir}, "
+        f"target |mean|<{args.target} counts)"
+    )
 
     # First point at 1.0, then step toward reducing |mean| (R fast -> lower trim,
     # L fast -> higher trim), then secant from there.
@@ -168,18 +172,32 @@ def tune(con, args):
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--ip", default="10.0.0.135")
     p.add_argument("--rpm", type=int, default=60, help="closed-loop test speed")
     p.add_argument("--dir", choices=["lower", "raise"], default="lower")
-    p.add_argument("--trace-s", dest="trace_s", type=int, default=6,
-                   help="seconds of L/R capture per trial")
+    p.add_argument(
+        "--trace-s",
+        dest="trace_s",
+        type=int,
+        default=6,
+        help="seconds of L/R capture per trial",
+    )
     p.add_argument("--hz", type=int, default=50)
-    p.add_argument("--cruise-start-ms", type=int, default=1500,
-                   help="skip this much of each run as spin-up before averaging")
-    p.add_argument("--target", type=float, default=6.0,
-                   help="stop once |mean(L-R)| is below this many counts (noise floor)")
+    p.add_argument(
+        "--cruise-start-ms",
+        type=int,
+        default=1500,
+        help="skip this much of each run as spin-up before averaging",
+    )
+    p.add_argument(
+        "--target",
+        type=float,
+        default=6.0,
+        help="stop once |mean(L-R)| is below this many counts (noise floor)",
+    )
     p.add_argument("--max-iter", type=int, default=6)
     p.add_argument("--trim-min", type=float, default=0.78)
     p.add_argument("--trim-max", type=float, default=1.25)
@@ -193,7 +211,9 @@ def main():
         con.cmd(f"config set motion.ff_trim_r {best[0]:.4f}")
         con.cmd("config save")
         con.cmd("home")
-        print(f"\nBEST: ff_trim_r = {best[0]:.3f}  (mean L-R = {best[1]:+.1f} counts) — saved")
+        print(
+            f"\nBEST: ff_trim_r = {best[0]:.3f}  (mean L-R = {best[1]:+.1f} counts) — saved"
+        )
         print("ff_trim_l left at 1.0. This is a per-device value (its own motor pair).")
         return 0
     finally:

@@ -162,12 +162,24 @@ def plot_summary(summary: dict, outdir: str) -> None:
         ):
             x, y = _series(summary, direction, ss_key)
             if x:
-                ax.plot(x, y, "-o", color=color, alpha=0.9 if direction == "down" else 0.5,
-                        label=f"{motor} {direction} steady")
+                ax.plot(
+                    x,
+                    y,
+                    "-o",
+                    color=color,
+                    alpha=0.9 if direction == "down" else 0.5,
+                    label=f"{motor} {direction} steady",
+                )
             xp, yp = _series(summary, direction, pk_key)
             if xp:
-                ax.plot(xp, yp, ":^", color=color, alpha=0.6 if direction == "down" else 0.3,
-                        label=f"{motor} {direction} peak")
+                ax.plot(
+                    xp,
+                    yp,
+                    ":^",
+                    color=color,
+                    alpha=0.6 if direction == "down" else 0.3,
+                    label=f"{motor} {direction} peak",
+                )
     ax.set_xlabel("duty (%)")
     ax.set_ylabel("current (mA)")
     ax.set_title("Current vs duty (steady-state + peak)")
@@ -181,8 +193,12 @@ def plot_summary(summary: dict, outdir: str) -> None:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--outdir", required=True, help="directory of duty<DD>_<dir>.csv files")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--outdir", required=True, help="directory of duty<DD>_<dir>.csv files"
+    )
     args = p.parse_args()
 
     paths = sorted(glob.glob(os.path.join(args.outdir, "duty*_*.csv")))

@@ -82,7 +82,9 @@ class WsClient:
         s.sendall(req.encode())
         resp = self._read_http_headers(s)
         if "101" not in resp.split("\r\n", 1)[0]:
-            raise WsError(f"handshake failed: {resp.splitlines()[0] if resp else '(empty)'}")
+            raise WsError(
+                f"handshake failed: {resp.splitlines()[0] if resp else '(empty)'}"
+            )
         self.sock = s
 
     def _read_http_headers(self, s: socket.socket) -> str:
@@ -203,7 +205,7 @@ def parse_profile(text: str) -> Profile:
     if begin is None:
         raise WsError(f"no PROFILE_BEGIN in response:\n{text[:300]}")
 
-    meta = _kv(begin[len("PROFILE_BEGIN"):])
+    meta = _kv(begin[len("PROFILE_BEGIN") :])
     cpr = int(meta.get("cpr", 896))
 
     # Data rows are the lines between the header row and PROFILE_END.
@@ -220,7 +222,7 @@ def parse_profile(text: str) -> Profile:
     done_l = done_r = False
     samples = len(data)
     if end is not None:
-        em = _kv(end[len("PROFILE_END"):])
+        em = _kv(end[len("PROFILE_END") :])
         done_l = em.get("done_l") == "1"
         done_r = em.get("done_r") == "1"
         samples = int(em.get("samples", samples))
@@ -356,7 +358,9 @@ def steady_rpm(prof: Profile) -> tuple[float, float]:
         return 0.0, 0.0
     lo, hi = len(rows) // 4, 3 * len(rows) // 4
     seg = rows[lo:hi] or rows
-    return _median([r["vel_l_rpm"] for r in seg]), _median([r["vel_r_rpm"] for r in seg])
+    return _median([r["vel_l_rpm"] for r in seg]), _median(
+        [r["vel_r_rpm"] for r in seg]
+    )
 
 
 def _median(xs: list[float]) -> float:
@@ -381,8 +385,12 @@ def run_sweep(args) -> int:
 
     plan = []
     for d in duties:
-        plan += [f"home", f"profile down {d} {args.down_rotations} {args.hz}",
-                 f"profile up {d} {args.up_rotations} {args.hz}", "home"]
+        plan += [
+            "home",
+            f"profile down {d} {args.down_rotations} {args.hz}",
+            f"profile up {d} {args.up_rotations} {args.hz}",
+            "home",
+        ]
 
     if args.dry_run:
         print("\n--- DRY RUN (no driving) — planned sequence ---")
@@ -399,7 +407,10 @@ def run_sweep(args) -> int:
     for d in duties:
         print(f"\n=== duty {d}% ===")
         _step(client, "home")
-        for direction, rots in (("down", args.down_rotations), ("up", args.up_rotations)):
+        for direction, rots in (
+            ("down", args.down_rotations),
+            ("up", args.up_rotations),
+        ):
             cmd = f"profile {direction} {d} {rots} {args.hz}"
             print(f"  -> {cmd}")
             resp = client.command(cmd)
@@ -457,18 +468,34 @@ def _invoke_plot(args) -> None:
 
 def main() -> int:
     here = os.path.dirname(os.path.abspath(__file__))
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--ip", default="10.0.0.135", help="device IP in WiFi debug mode")
-    p.add_argument("--duties", default="10,20,30,40,50,60,70,80", help="comma-separated duty %% list")
+    p.add_argument(
+        "--duties",
+        default="10,20,30,40,50,60,70,80",
+        help="comma-separated duty %% list",
+    )
     p.add_argument("--down-rotations", type=int, default=10)
     p.add_argument("--up-rotations", type=int, default=6)
     p.add_argument("--hz", type=int, default=50, help="device sample rate")
-    p.add_argument("--timeout", type=float, default=40.0, help="per-command response timeout (s)")
+    p.add_argument(
+        "--timeout", type=float, default=40.0, help="per-command response timeout (s)"
+    )
     p.add_argument("--label", default="latest", help="run label -> runs/<label>/")
     p.add_argument("--outdir", default=None, help="override output dir")
-    p.add_argument("--dry-run", action="store_true", help="connect + read enc + print plan; no driving")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="connect + read enc + print plan; no driving",
+    )
     p.add_argument("--plot", action="store_true", help="invoke plot.py at the end")
-    p.add_argument("--plot-python", default=None, help="python for plotting (e.g. ../.venv/bin/python)")
+    p.add_argument(
+        "--plot-python",
+        default=None,
+        help="python for plotting (e.g. ../.venv/bin/python)",
+    )
     args = p.parse_args()
     if args.outdir is None:
         args.outdir = os.path.join(here, "runs", args.label)
@@ -479,7 +506,10 @@ def main() -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("\ninterrupted — the device brakes on its own timeout; consider a power cycle.", file=sys.stderr)
+        print(
+            "\ninterrupted — the device brakes on its own timeout; consider a power cycle.",
+            file=sys.stderr,
+        )
         return 130
 
 

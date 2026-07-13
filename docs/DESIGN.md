@@ -699,7 +699,7 @@ attribute report at pairing time per its own policy).
                   ┌─────────────────┐
                   │     FAULT       │
                   └────────┬────────┘
-                  hub requests recal
+                  hub requests recalibration
                            ▼
                   ┌─────────────────┐
         manual ─► │   CALIBRATING   │

@@ -1,0 +1,6 @@
+[files]
+extend-exclude = ["electronics/**"]
+
+[default.extend-words]
+PN = "PN"
+secur = "secur"
