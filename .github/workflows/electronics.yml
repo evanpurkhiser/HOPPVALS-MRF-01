@@ -30,7 +30,7 @@ jobs:
       SCH: electronics/HV-MRF-01.kicad_sch
       PCB: electronics/HV-MRF-01.kicad_pcb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: kicad-cli version
         run: docker run --rm "$KICAD_IMAGE" kicad-cli version
