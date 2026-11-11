@@ -12,18 +12,19 @@
 
 **IKEA HOPPVALS Motorized Retrofit, version 01** (short: **HV-MRF-01**).
 
-An open hardware + firmware project that motorizes an
-[IKEA HOPPVALS][hoppvals] cellular (honeycomb) blind and exposes it to your
-smart home as a standard **Zigbee 3.0 Window Covering** — so any compliant hub
-(Home Assistant / ZHA, Zigbee2MQTT, deCONZ, SmartThings) can drive it with no
-custom converters.
+An open hardware + firmware project
+that motorizes an [IKEA HOPPVALS][hoppvals] cellular (honeycomb) blind
+and exposes it to your smart home as a standard **Zigbee 3.0 Window Covering** —
+so any compliant hub (Home Assistant / ZHA, Zigbee2MQTT, deCONZ, SmartThings)
+can drive it with no custom converters.
 
-Two synchronized DC gearmotors wind the blind's lift cords onto grooved drums
-to raise and lower the shade. A custom ESP32-C6 controller board fits inside
-the head rail and runs the firmware in this repo.
+Two synchronized DC gearmotors wind the blind's lift cords onto grooved drums to
+raise and lower the shade.
+A custom ESP32-C6 controller board fits inside the head rail
+and runs the firmware in this repo.
 
-> Status: work in progress — hardware and firmware are still under active
-> development.
+> Status: work in progress —
+> hardware and firmware are still under active development.
 
 ## Repository layout
 
@@ -37,15 +38,13 @@ the head rail and runs the firmware in this repo.
 
 ## Documentation
 
-- [`docs/DESIGN.md`](docs/DESIGN.md) — system design: mechanics, motion
-  control, Zigbee behavior, and the reasoning behind it.
-- [`docs/PCB_DESIGN_OVERVIEW.md`](docs/PCB_DESIGN_OVERVIEW.md) — a walkthrough
-  of the controller PCB and its design decisions.
+- [`docs/DESIGN.md`](docs/DESIGN.md) — system design: mechanics, motion control,
+  Zigbee behavior, and the reasoning behind it.
 
 ## Building Firmware
 
-The firmware uses ESP-IDF for the `esp32c6` target. The repo keeps the ESP-IDF
-checkout and tools local to the project:
+The firmware uses ESP-IDF for the `esp32c6` target.
+The repo keeps the ESP-IDF checkout and tools local to the project:
 
 - `.esp-idf/` — ESP-IDF checkout
 - `.idf_tools/` — ESP-IDF toolchains and Python environment
